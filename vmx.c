@@ -348,11 +348,28 @@ vmxhoststate(void)
  * page offset.  An entry is "present" if any of its R/W/X bits is set.
  * Used by vmcreate() to map guest memory and to load the image.
  */
-static uint64*
-eptwalk(uint64 *pml4, uint64 gpa, int alloc)
-{
-  /* HW1 part 2: write this function; see HW1.md. */
-  return 0;
+static uint64* eptwalk(uint64 *pml4, uint64 gpa, int alloc) {
+  uint64 *table = pml4, *e;
+  char *next;
+  int level;
+
+  // Walk the three upper levels
+  for (level = 3; level > 0; --level) {
+    e = &table[(gpa >> (12 + 9*level)) & 0x01FF];
+    if (*e & EPT_RWX) {
+      // The entry is present
+      table = (uint64*)P2V(EPT_ADDR(*e));
+    } else {
+      // The entry is not present
+      if (!alloc || (next = kalloc()) == 0) return 0;
+      memset(next, 0, PGSIZE);
+      *e = V2P(next) | EPT_RWX;
+      table = (uint64*)next;
+    }
+  }
+
+  // Return the leaf entry
+  return (uint64*)EPT_ADDR(table[(gpa >> 12) & 0x01FF]);
 }
 
 /*
@@ -428,9 +445,11 @@ vmcreate(char *image, int len, int memsz)
   uint64 gpa, *pte, need;
   char *mem;
   int id, n, off, r;
+  // We need three things for one VM:
+  // - a slot in the kernel’s table of VMs
+  // - a VMCS page, the 4 KB structure that the CPU will later use to hold the guest’s and the host’s state (we only allocate it here)
+  // - guest-physical memory: a block of RAM that the guest will believe is its own physical memory, and the EPT, the page table that tells the CPU which real page backs each guest-physical page
 
-  /* HW1 part 2: write this function; see HW1.md. */
-  return -1;
 }
 
 /*
