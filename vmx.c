@@ -369,7 +369,7 @@ static uint64* eptwalk(uint64 *pml4, uint64 gpa, int alloc) {
   }
 
   // Return the leaf entry
-  return (uint64*)EPT_ADDR(table[(gpa >> 12) & 0x01FF]);
+  return &table[(gpa >> 12) & 0x01FF];
 }
 
 /*
@@ -448,14 +448,19 @@ vmcreate(char *image, int len, int memsz)
   int id, n, off, r;
 
   // Ensure memory requirements are valid
-  if (memsz <= 0 || memsz > VM_MAXMEM || len < 0 || VM_LOAD_ADDR + len > memsz)
+  if (memsz <= 0 || memsz > VM_MAXMEM || len < 0 || VM_LOAD_ADDR + len > memsz) {
+    cprintf("vmx: bad memory requirement\n");
     return -1;
+  }
 
   // Check that this CPU is in VMX operation
   pushcli();
   r = mycpu()->vmx_ok;
   popcli();
-  if (!r) return 1;
+  if (!r) {
+    cprintf("vmx: CPU not in VMX operation\n");
+    return -1;
+  }
 
   // Check the EPT capabilities
   if ((rdmsr(MSR_IA32_VMX_EPT_VPID_CAP) & need ) != need) {
@@ -470,6 +475,7 @@ vmcreate(char *image, int len, int memsz)
   for (id = 0; id < NVM; ++id) if (!vms.vm[id].used) break;
   if (id == NVM) {
     release(&vms.lock);
+    cprintf("vmx: VM table full\n");
     return -1;
   }
   vm = &vms.vm[id];
@@ -481,17 +487,26 @@ vmcreate(char *image, int len, int memsz)
   vm->rflags = 0x2; // reserved bit must be 1
 
   // Allocate the VMCS page
-  if ((vm->vmcs = kalloc()) == 0) goto bad;
+  if ((vm->vmcs = kalloc()) == 0) {
+    cprintf("vmx: Failed to allocate VMCS page\n");
+    goto bad;
+  }
   memset(vm->vmcs, 0, PGSIZE);
 
   // Allocate the EPT root and build the EPTP
-  if ((vm->ept = (uint64*)kalloc()) == 0) goto bad;
+  if ((vm->ept = (uint64*)kalloc()) == 0) {
+    cprintf("vmx: failed to allocate EPT\n");
+    goto bad;
+  }
   memset(vm->ept, 0, PGSIZE);
   vm->eptp = V2P(vm->ept) | EPTP_WALK_4 | EPTP_MEMTYPE_WB;
 
   // Allocate and map the guest's memory
   for (gpa = 0; gpa < vm->memsz; gpa += PGSIZE) {
-    if ((pte = eptwalk(vm->ept, gpa, 1)) == 0 || (mem = kalloc()) == 0) goto bad;
+    if ((pte = eptwalk(vm->ept, gpa, 1)) == 0 || (mem = kalloc()) == 0) {
+      cprintf("vmx: failed to map guest memory\n");
+      goto bad;
+    }
     memset(mem, 0, PGSIZE);
     *pte = V2P(mem) | EPT_RWX | EPT_MEMTYPE_WB;
   }
@@ -505,17 +520,23 @@ vmcreate(char *image, int len, int memsz)
     memmove((char*)P2V(EPT_ADDR(*pte)) + gpa % PGSIZE, image + off, n);
   }
 
+  cprintf("vmcreate: vm %d, memsz %x, eptp %x\n", id, vm->memsz, vm->eptp);
+
   // Prepare the VMCS
   *(uint*)vm->vmcs = vmcs_revision;
   pushcli();
   if (!mycpu()->vmx_ok || vmclear(V2P(vm->vmcs)) < 0 || vmptrld(V2P(vm->vmcs)) <0) {
     popcli();
+    cprintf("vmx: failed to prepare VMCS\n");
     goto bad;
   }
   r = vmcsinit(vm);
   vmclear(V2P(vm->vmcs));
   popcli();
-  if (r < 0) goto bad;
+  if (r < 0) {
+    cprintf("vmx: failed to init VMCS\n");
+    goto bad;
+  }
   return id;
 
 bad:
