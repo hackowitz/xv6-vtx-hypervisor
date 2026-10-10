@@ -217,7 +217,7 @@ vmxinit(void)
   char *region;
   cpuid_insn(1, &a, &b, &c, &d);
   if (!(c & CPUID1_ECX_VMX)) {
-    cprintf("CPU %d: no VMX support\n", id);
+    cprintf("cpu%d: no VMX support\n", id);
     return;
   }
 
@@ -228,7 +228,7 @@ vmxinit(void)
     wrmsr(MSR_IA32_FEATURE_CONTROL, fc);
   }
   if (!(fc & FEATURE_CONTROL_VMXON_OUTSIDE_SMX)) {
-    cprintf("CPU %d: VMX disabled by firmware\n", id);
+    cprintf("cpu%d: VMX disabled by firmware\n", id);
     return;
   }
 
@@ -245,7 +245,7 @@ vmxinit(void)
   // 4. prepare a page of memory for VMXON to use as bookkeeping;
   vmcs_revision = rdmsr(MSR_IA32_VMX_BASIC) & 0x7FFFFFFF;
   if ((region = kalloc()) == 0) {
-    cprintf("CPU %d: no memory for the VMXON region\n", id);
+    cprintf("cpu%d: no memory for the VMXON region\n", id);
     return;
   }
   memset(region, 0, PGSIZE);
@@ -253,12 +253,12 @@ vmxinit(void)
 
   // 5. execute the VMXON instruction.
   if (vmxon(V2P(region)) < 0) {
-    cprintf("CPU %d: VMXON failed", id);
+    cprintf("cpu%d: VMXON failed", id);
     kfree(region);
     return;
   }
   cpus[id].vmx_ok = 1;  // mycpu()->vmx_ok = 1;
-  cprintf("CPU %id: VMX enabled");
+  cprintf("cpu%d: VMX enabled\n", id);
 }
 
 /*
