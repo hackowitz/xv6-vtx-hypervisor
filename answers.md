@@ -16,7 +16,8 @@ Fill in this file and hand it in with your code. Replace each
 > In Step 1, why does the function `return` when VMX is missing instead
 > of calling `panic()`?
 
-**Answer:** (your answer)
+**Answer:** We don't want to crash the OS when VMX is unavailable! Much better is to print a useful
+warning and continue without the feature.
 
 ### Question 1.2
 
@@ -24,21 +25,25 @@ Fill in this file and hand it in with your code. Replace each
 > locked VMX. Why does the code still handle the unlocked case instead
 > of just failing?
 
-**Answer:** (your answer)
+**Answer:** It's a one-way switch; we can't unlock it if it's already locked, but we can lock it if
+it's unlocked.
 
 ### Question 1.3
 
 > In Step 3, what would happen if we skipped `lcr4(cr4)` and went
 > straight to `VMXON`?
 
-**Answer:** (your answer)
+**Answer:** From the book, "VMSON fails if any of these bits contain an unsupported value".
 
 ### Question 1.4
 
 > In Step 4, why does each CPU need its own VMXON region? What could go
 > wrong if all CPUs shared one?
 
-**Answer:** (your answer)
+**Answer:** From the book, software should use a separate VMXON region for each logical processor.
+Doing otherwise may lead to unpredictable behavior such as VM entry failure, nondeterministic
+behavior, incorrect support for VMX non-root operation, undesired processor state, or processor
+shutdown.
 
 ## Part 2: Creating a VM, its memory, and the EPT
 
