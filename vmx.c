@@ -210,7 +210,55 @@ invept(uint64 type, uint64 eptp)
 void
 vmxinit(void)
 {
-  /* HW1 part 1: write this function; see HW1.md. */
+  // 1. check that the CPU supports VMX;
+  uint a, b, c, d;
+  uint64 fc, cr0, cr4;
+  int id = cpuid();
+  char *region;
+  cpuid_insn(1, &a, &b, &c, &d);
+  if (!(c & CPUID1_ECX_VMX)) {
+    cprintf("CPU %d: no VMX support\n", id);
+    return;
+  }
+
+  // 2. check that VMX is enabled (the firmware may have forbidden it);
+  fc = rdmsr(MSR_IA32_FEATURE_CONTROL);
+  if (!(fc & FEATURE_CONTROL_LOCKED)){
+    fc |= FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_VMXON_OUTSIDE_SMX;
+    wrmsr(MSR_IA32_FEATURE_CONTROL, fc);
+  }
+  if (!(fc & FEATURE_CONTROL_VMXON_OUTSIDE_SMX)) {
+    cprintf("CPU %d: VMX disabled by firmware\n", id);
+    return;
+  }
+
+  // 3. put the control registers in a state that VMX accepts;
+  cr0 = rcr0();
+  cr0 |= rdmsr(MSR_IA32_VMX_CR0_FIXED0);
+  cr0 &= rdmsr(MSR_IA32_VMX_CR0_FIXED0);
+  lcr0(cr0);
+  cr4 = rcr4() | CR4_VMXE;
+  cr4 |= rdmsr(MSR_IA32_VMX_CR4_FIXED0);
+  cr4 &= rdmsr(MSR_IA32_VMX_CR4_FIXED1);
+  lcr4(cr4);
+
+  // 4. prepare a page of memory for VMXON to use as bookkeeping;
+  vmcs_revision = rdmsr(MSR_IA32_VMX_BASIC) & 0x7FFFFFFF;
+  if ((region = kalloc()) == 0) {
+    cprintf("CPU %d: no memory for the VMXON region\n", id);
+    return;
+  }
+  memset(region, 0, PGSIZE);
+  *(uint*)region = vmcs_revision;
+
+  // 5. execute the VMXON instruction.
+  if (vmxon(V2P(region)) < 0) {
+    cprintf("CPU %d: VMXON failed", id);
+    kfree(region);
+    return;
+  }
+  cpus[id].vmx_ok = 1;  // mycpu()->vmx_ok = 1;
+  cprintf("CPU %id: VMX enabled");
 }
 
 /*
