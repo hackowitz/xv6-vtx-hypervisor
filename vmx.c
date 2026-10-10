@@ -441,15 +441,86 @@ getvm(int id)
 int
 vmcreate(char *image, int len, int memsz)
 {
+  static uint64 need = EPT_CAP_WALK_4 | EPT_CAP_MEMTYPE_WB | EPT_CAP_INVEPT | EPT_CAP_INVEPT_SINGLE;
   struct vm *vm;
-  uint64 gpa, *pte, need;
+  uint64 gpa, *pte;
   char *mem;
   int id, n, off, r;
-  // We need three things for one VM:
-  // - a slot in the kernel’s table of VMs
-  // - a VMCS page, the 4 KB structure that the CPU will later use to hold the guest’s and the host’s state (we only allocate it here)
-  // - guest-physical memory: a block of RAM that the guest will believe is its own physical memory, and the EPT, the page table that tells the CPU which real page backs each guest-physical page
 
+  // Ensure memory requirements are valid
+  if (memsz <= 0 || memsz > VM_MAXMEM || len < 0 || VM_LOAD_ADDR + len > memsz)
+    return -1;
+
+  // Check that this CPU is in VMX operation
+  pushcli();
+  r = mycpu()->vmx_ok;
+  popcli();
+  if (!r) return 1;
+
+  // Check the EPT capabilities
+  if ((rdmsr(MSR_IA32_VMX_EPT_VPID_CAP) & need ) != need) {
+    cprintf("vmx: CPU lacks required EPT features\n");
+    return -1;
+  }
+
+  // We need three things for one VM:
+
+  // Claim a slot in the VM table
+  acquire(&vms.lock);
+  for (id = 0; id < NVM; ++id) if (!vms.vm[id].used) break;
+  if (id == NVM) {
+    release(&vms.lock);
+    return -1;
+  }
+  vm = &vms.vm[id];
+  memset(vm, 0, sizeof(*vm));
+  vm->used = 1;
+  vm->owner = myproc();
+  release(&vms.lock);
+  vm->memsz = PGROUNDUP(memsz);
+  vm->rflags = 0x2; // reserved bit must be 1
+
+  // Allocate the VMCS page
+  if ((vm->vmcs = kalloc()) == 0) goto bad;
+  memset(vm->vmcs, 0, PGSIZE);
+
+  // Allocate the EPT root and build the EPTP
+  if ((vm->ept = (uint64*)kalloc()) == 0) goto bad;
+  memset(vm->ept, 0, PGSIZE);
+  vm->eptp = V2P(vm->ept) | EPTP_WALK_4 | EPTP_MEMTYPE_WB;
+
+  // Allocate and map the guest's memory
+  for (gpa = 0; gpa < vm->memsz; gpa += PGSIZE) {
+    if ((pte = eptwalk(vm->ept, gpa, 1)) == 0 || (mem = kalloc()) == 0) goto bad;
+    memset(mem, 0, PGSIZE);
+    *pte = V2P(mem) | EPT_RWX | EPT_MEMTYPE_WB;
+  }
+
+  // Copy the image into guest memory
+  for (off = 0; off < len; off += n) {
+    gpa = VM_LOAD_ADDR + off;
+    n = PGSIZE - gpa % PGSIZE;
+    if (n > len - off) n = len - off;
+    pte = eptwalk(vm->ept, gpa, 0);
+    memmove((char*)P2V(EPT_ADDR(*pte)) + gpa % PGSIZE, image + off, n);
+  }
+
+  // Prepare the VMCS
+  *(uint*)vm->vmcs = vmcs_revision;
+  pushcli();
+  if (!mycpu()->vmx_ok || vmclear(V2P(vm->vmcs)) < 0 || vmptrld(V2P(vm->vmcs)) <0) {
+    popcli();
+    goto bad;
+  }
+  r = vmcsinit(vm);
+  vmclear(V2P(vm->vmcs));
+  popcli();
+  if (r < 0) goto bad;
+  return id;
+
+bad:
+  vmfree(vm);
+  return -1;
 }
 
 /*
