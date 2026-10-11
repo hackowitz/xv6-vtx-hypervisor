@@ -133,6 +133,7 @@ main(int argc, char *argv[])
     printf(2, "runvm: vmcreate failed\n");
     exit();
   }
+
   /* Step 2: set the guest's initial registers. All other registers
    * keep the defaults chosen by the kernel (flat 32-bit protected mode,
    * paging off; see vmcsinit() in vmx.c). Execution starts at the first

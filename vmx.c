@@ -207,9 +207,7 @@ invept(uint64 type, uint64 eptp)
  * leaves the flag clear, so vmcreate()/vmrun() will refuse to work.
  * The steps follow SDM 26.7 ("Enabling and Entering VMX Operation").
  */
-void
-vmxinit(void)
-{
+void vmxinit(void) {
   // 1. check that the CPU supports VMX;
   uint a, b, c, d;
   uint64 fc, cr0, cr4;
@@ -235,7 +233,7 @@ vmxinit(void)
   // 3. put the control registers in a state that VMX accepts;
   cr0 = rcr0();
   cr0 |= rdmsr(MSR_IA32_VMX_CR0_FIXED0);
-  cr0 &= rdmsr(MSR_IA32_VMX_CR0_FIXED0);
+  cr0 &= rdmsr(MSR_IA32_VMX_CR0_FIXED1);
   lcr0(cr0);
   cr4 = rcr4() | CR4_VMXE;
   cr4 |= rdmsr(MSR_IA32_VMX_CR4_FIXED0);
@@ -520,7 +518,10 @@ vmcreate(char *image, int len, int memsz)
     memmove((char*)P2V(EPT_ADDR(*pte)) + gpa % PGSIZE, image + off, n);
   }
 
-  cprintf("vmcreate: vm %d, memsz %x, eptp %x\n", id, vm->memsz, vm->eptp);
+  cprintf("dbg: vmcreate: vm %d, memsz %x, eptp %x\n", id, vm->memsz, vm->eptp);
+  pte = eptwalk(vm->ept, VM_LOAD_ADDR, 0);
+  cprintf("dbg: image word %x, guest word %x\n", (uint64)*(uint*)image,
+          (uint64)*(uint*)P2V(EPT_ADDR(*pte)));
 
   // Prepare the VMCS
   *(uint*)vm->vmcs = vmcs_revision;
