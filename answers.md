@@ -54,7 +54,9 @@ shutdown.
 > would go wrong if the hypervisor gave the guest direct access to the
 > host's physical memory instead?
 
-**Answer:** (your answer)
+**Answer:** The EPT translates guest "physical" addresses to host physical addresses. The host OS
+controls it, since it provides access to physical memory. If the hypervisor gave the guest control
+of physical memory, the guest could take control of the host by changing its memory.
 
 ### Question 2.2
 
@@ -62,7 +64,10 @@ shutdown.
 > zero every new table. These are two different reasons to zero. State
 > each, and say what the guest or the CPU would see if we skipped it.
 
-**Answer:** (your answer)
+**Answer:** We zero the page tables since otherwise there could be an inadvertent mapping that
+gives the guest unintented memory access. We zero the memory pages because otherwise the guest
+could access whatever memory had been freed, including sensitive data from the host or other
+programs.
 
 ### Question 2.3
 
@@ -70,7 +75,8 @@ shutdown.
 > `eptwalk()`, instead of one `memmove` of `len` bytes to the guest's
 > first page?
 
-**Answer:** (your answer)
+**Answer:** The guest "physical" pages may not actually be continuous in physical memory, so we
+must take care to write the image to _guest_ physical memory via the EPT mapping.
 
 ### Question 2.4
 
@@ -80,7 +86,10 @@ shutdown.
 > treats as valid (hint: see Appendix A.10 for execute-only support), and
 > say why our code never creates such an entry.
 
-**Answer:** (your answer)
+**Answer:** As mentioned in the question itself and in Appendix A.10, the processor supports
+execute-only translations. Our code doesn't create this type of entry because we always set
+`EPT_RWX` so the guest can fully control it's own physical memory - just as any OS would
+expect if it were running unvirtualized.
 
 ## Part 3: The VMCS, describing the guest and the host
 
