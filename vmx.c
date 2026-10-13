@@ -221,7 +221,7 @@ void vmxinit(void) {
 
   // 2. check that VMX is enabled (the firmware may have forbidden it);
   fc = rdmsr(MSR_IA32_FEATURE_CONTROL);
-  if (!(fc & FEATURE_CONTROL_LOCKED)){
+  if (!(fc & FEATURE_CONTROL_LOCKED)) {
     fc |= FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_VMXON_OUTSIDE_SMX;
     wrmsr(MSR_IA32_FEATURE_CONTROL, fc);
   }
@@ -247,7 +247,7 @@ void vmxinit(void) {
     return;
   }
   memset(region, 0, PGSIZE);
-  *(uint*)region = vmcs_revision;
+  *(uint *)region = vmcs_revision;
 
   // 5. execute the VMXON instruction.
   if (vmxon(V2P(region)) < 0) {
@@ -255,8 +255,10 @@ void vmxinit(void) {
     kfree(region);
     return;
   }
-  cpus[id].vmx_ok = 1;  // mycpu()->vmx_ok = 1;
+  cpus[id].vmx_ok = 1; // mycpu()->vmx_ok = 1;
   cprintf("cpu%d: VMX enabled\n", id);
+  cprintf("dbg: cpu%d.MSR_IA32_FEATURE_CONTROL: 0x%x\n", id, (uint64)MSR_IA32_FEATURE_CONTROL);
+  cprintf("dbg: cpu%d.MSR_IA32_VMX_BASIC: 0x%x\n", id, (uint64)MSR_IA32_VMX_BASIC);
 }
 
 /*
@@ -276,11 +278,15 @@ void vmxinit(void) {
  * the value to write to the VMCS.  Returns 0, or -1 if some wanted
  * control is unsupported.  Called only by vmcsinit().
  */
-static int
-adjustctl(uint msr, uint want, uint *ctl)
-{
-  /* HW1 part 3: write this function; see HW1.md. */
-  return -1;
+static int adjustctl(uint msr, uint want, uint *ctl) {
+  uint64 cap = rdmsr(msr);
+  uint v = (want | (uint)cap) & (uint)(cap >> 32);
+  if ((v & want) != want) {
+    cprintf("vmx: controls 0x%x unsupported (MSR 0x%x)\n", (uint64)(want & ~v), (uint64)msr);
+    return -1;
+  }
+  *ctl = v;
+  return 0;
 }
 
 /*
@@ -311,10 +317,101 @@ guestseg(int seg, uint sel, uint64 base, uint limit, uint ar)
  * is rewritten by vmrun() before each entry.  Returns 0, or -1 if the
  * CPU lacks a control we need.
  */
-static int
-vmcsinit(struct vm *vm)
-{
-  /* HW1 part 3: write this function; see HW1.md. */
+static int vmcsinit(struct vm *vm) {
+  int seg, t = (rdmsr(MSR_IA32_VMX_BASIC) & VMX_BASIC_TRUE_CTLS) != 0;
+  uint pin, cpu, cpu2, exitctl, entryctl;
+
+  // Compute the five control words and exit on any failure
+  if (adjustctl(  // pin-based
+          t ? MSR_IA32_VMX_TRUE_PINBASED_CTLS : MSR_IA32_VMX_PINBASED_CTLS,
+          PIN_EXTINT_EXITING | PIN_NMI_EXITING,
+          &pin) < 0 ||
+      adjustctl(  // primary processor-based
+          t ? MSR_IA32_VMX_TRUE_PROCBASED_CTLS : MSR_IA32_VMX_PROCBASED_CTLS,
+          CPU_HLT_EXITING | CPU_UNCOND_IO_EXITING | CPU_ACTIVATE_SECONDARY,
+          &cpu) < 0 ||
+      adjustctl(  // secondary
+          MSR_IA32_VMX_PROCBASED_CTLS2,
+          CPU2_ENABLE_EPT | CPU2_UNRESTRICTED_GUEST,
+          &cpu2) < 0 ||
+      adjustctl(  // exit
+          t ? MSR_IA32_VMX_TRUE_EXIT_CTLS : MSR_IA32_VMX_EXIT_CTLS,
+          EXIT_HOST_ADDR_SPACE_SIZE | EXIT_SAVE_IA32_EFER | EXIT_LOAD_IA32_EFER,
+          &exitctl) < 0 ||
+      adjustctl(  // entry
+          t ? MSR_IA32_VMX_TRUE_ENTRY_CTLS : MSR_IA32_VMX_ENTRY_CTLS,
+          ENTRY_LOAD_IA32_EFER, &entryctl) < 0)
+    return -1;
+
+  // Refuse a CPU that forces unwanted exits
+  if (cpu &
+      (CPU_CR3_LOAD_EXITING | CPU_CR3_STORE_EXITING | CPU_USE_IO_BITMAPS | CPU_USE_MSR_BITMAPS)) {
+    cprintf("vmx: CPU forces unwanted exiting controls 0x%x\n", (uint64)cpu);
+    return -1;
+  }
+
+  // Control fields
+  vmwrite(PIN_BASED_VM_EXEC_CONTROL, pin);
+  vmwrite(CPU_BASED_VM_EXEC_CONTROL, cpu);
+  vmwrite(SECONDARY_VM_EXEC_CONTROL, cpu2);
+  vmwrite(VM_EXIT_CONTROLS, exitctl);
+  vmwrite(VM_ENTRY_CONTROLS, entryctl);
+  // Exception bitmap
+  vmwrite(EXCEPTION_BITMAP, 0xFFFFFFFF);
+  vmwrite(PAGE_FAULT_ERROR_CODE_MASK, 0);
+  vmwrite(PAGE_FAULT_ERROR_CODE_MATCH, 0);
+  // Optional features
+  vmwrite(CR3_TARGET_COUNT, 0);
+  vmwrite(VM_EXIT_MSR_STORE_COUNT, 0);
+  vmwrite(VM_EXIT_MSR_LOAD_COUNT, 0);
+  vmwrite(VM_ENTRY_MSR_LOAD_COUNT, 0);
+  vmwrite(VM_ENTRY_INTR_INFO_FIELD, 0);
+  vmwrite(EPT_POINTER, vm->eptp);
+  // Descriptor tables
+  vmwrite(GUEST_GDTR_BASE, 0);
+  vmwrite(GUEST_GDTR_LIMIT, 0);
+  vmwrite(GUEST_IDTR_BASE, 0);
+  vmwrite(GUEST_IDTR_LIMIT, 0);
+  // Guest non-register state
+  vmwrite(GUEST_INTERRUPTIBILITY_INFO, 0);
+  vmwrite(GUEST_ACTIVITY_STATE, 0);
+  vmwrite(GUEST_PENDING_DBG_EXCEPTIONS, 0);
+  vmwrite(VMCS_LINK_POINTER, ~0ULL);
+  vmwrite(GUEST_IA32_DEBUGCTL, 0);
+  vmwrite(GUEST_SYSENTER_CS, 0);
+  vmwrite(GUEST_SYSENTER_EIP, 0);
+  vmwrite(GUEST_SYSENTER_ESP, 0);
+  // Host control registers, return address
+  vmwrite(CR0_GUEST_HOST_MASK, 0);
+  vmwrite(CR0_READ_SHADOW, 0);
+  vmwrite(CR4_GUEST_HOST_MASK, CR4_VMXE);
+  vmwrite(CR4_READ_SHADOW, 0);
+  vmwrite(HOST_RIP, (uint64)vmx_exit);
+  // Guest control registers
+  vmwrite(
+      GUEST_CR0,
+      ((CR0_PE | CR0_ET | CR0_NE) | (rdmsr(MSR_IA32_VMX_CR0_FIXED0) & ~(uint64)(CR0_PE | CR0_PG))) &
+          rdmsr(MSR_IA32_VMX_CR0_FIXED1)
+  );
+  vmwrite(GUEST_CR3, 0);
+  vmwrite(GUEST_CR4, (CR4_VMXE | rdmsr(MSR_IA32_VMX_CR4_FIXED0)) & rdmsr(MSR_IA32_VMX_CR4_FIXED1));
+  vmwrite(GUEST_DR7, 0x400);
+
+  // Guest segment registers
+  guestseg(SEG_CS, 0x08, 0, 0xFFFFFFFF, AR_CODE32);
+  for (seg = SEG_ES; seg <= SEG_GS; ++seg)
+    if (seg != SEG_CS)
+      guestseg(seg, 0x10, 0, 0xFFFFFFFF, AR_DATA32);
+  guestseg(SEG_LDTR, 0, 0, 0, AR_UNUSABLE);
+  guestseg(SEG_TR, 0, 0, 0xFFFF, AR_TSS32_BUSY);
+
+  cprintf(
+      "vmcs: cpu2=0x%x cr0=0x%x cr4=0x%x link=0x%x\n",
+      vmread(SECONDARY_VM_EXEC_CONTROL),
+      vmread(GUEST_CR0),
+      vmread(GUEST_CR4),
+      vmread(VMCS_LINK_POINTER)
+  );
   return 0;
 }
 
@@ -466,8 +563,6 @@ vmcreate(char *image, int len, int memsz)
     return -1;
   }
 
-  // We need three things for one VM:
-
   // Claim a slot in the VM table
   acquire(&vms.lock);
   for (id = 0; id < NVM; ++id) if (!vms.vm[id].used) break;
@@ -517,11 +612,6 @@ vmcreate(char *image, int len, int memsz)
     pte = eptwalk(vm->ept, gpa, 0);
     memmove((char*)P2V(EPT_ADDR(*pte)) + gpa % PGSIZE, image + off, n);
   }
-
-  cprintf("dbg: vmcreate: vm %d, memsz %x, eptp %x\n", id, vm->memsz, vm->eptp);
-  pte = eptwalk(vm->ept, VM_LOAD_ADDR, 0);
-  cprintf("dbg: image word %x, guest word %x\n", (uint64)*(uint*)image,
-          (uint64)*(uint*)P2V(EPT_ADDR(*pte)));
 
   // Prepare the VMCS
   *(uint*)vm->vmcs = vmcs_revision;
@@ -689,8 +779,9 @@ vmrun(int id, struct vmexit *ue)
      * Returns 0 after a VM exit, or -1 if the entry instruction itself
      * failed (invalid controls or host/guest state).
      */
+    cprintf("dbg: enter vm\n");
     r = vmx_enter(&vm->regs, 0);
-
+    cprintf("dbg: entered vm\n");
     /*
      * Back in the host.  The VMCS is still current on this CPU, so
      * read everything we need now, before VMCLEAR.

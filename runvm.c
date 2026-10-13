@@ -143,10 +143,12 @@ main(int argc, char *argv[])
   /* Step 3: the run loop. Each vmrun() executes the guest until a VM
    * exit that the kernel cannot handle itself. */
   for(;;){
+    printf(2, "dbg: run vm\n");
     if(vmrun(vm, &e) < 0){
       printf(2, "runvm: vmrun failed\n");
       exit();
     }
+    printf(2, "dbg: ran vm\n");
     /* A failed VM *entry* (rather than an exit from the guest). The
      * reason field then is the failure code, e.g. 33 for invalid guest
      * state; qual says which check failed. Usually a bug in the
