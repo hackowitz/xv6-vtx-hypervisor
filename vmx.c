@@ -665,9 +665,25 @@ int
 vmsetreg(int id, int reg, uint64 val)
 {
   struct vm *vm;
+  struct guestregs regs;
+  uint64 rip, rsp, rflags, efer;
 
-  /* HW1 part 5: write this function; see HW1.md. */
-  return -1;
+  if ((vm = getvm(id)) == 0 || reg < 0 || reg >= VMREG_NREGS)
+    return -1;
+  switch (reg) {
+  case VMREG_RSP:
+    vm->rsp = val;
+    break;
+  case VMREG_RIP:
+    vm->rip = val;
+    break;
+  case VMREG_RFLAGS:
+    vm->rflags = val | 0x0002;
+    break;
+  default:
+    ((uint64 *)&vm->regs)[reg] = val;
+  }
+  return 0;
 }
 
 /*
@@ -683,8 +699,22 @@ vmgetreg(int id, int reg, uint64 *val)
 {
   struct vm *vm;
 
-  /* HW1 part 5: write this function; see HW1.md. */
-  return -1;
+  if ((vm = getvm(id)) == 0 || reg < 0 || reg >= VMREG_NREGS)
+    return -1;
+  switch (reg) {
+  case VMREG_RSP:
+    *val = vm->rsp;
+    break;
+  case VMREG_RIP:
+    *val = vm->rip;
+    break;
+  case VMREG_RFLAGS:
+    *val = vm->rflags;
+    break;
+  default:
+    *val = ((uint64 *)&vm->regs)[reg];
+  }
+  return 0;
 }
 
 /* Mask for the low `size` bytes (1, 2 or 4) of an I/O access. */
@@ -701,11 +731,18 @@ iomask(int size)
  * handled, or -1 to send the exit to user space.  Called by
  * vmxhandle(); write is nonzero for WRMSR.
  */
-static int
-vmxmsr(struct vm *vm, int write)
-{
-  /* HW1 part 5: write this function; see HW1.md. */
-  return -1;
+static int vmxmsr(struct vm *vm, int write) {
+  uint64 val;
+  if ((uint)vm->regs.rcx != EFER_MSR)
+    return -1;
+  if (write) {
+    val = (vm->regs.rdx << 32) | (uint)vm->regs.rax;
+    vm->efer = (val & ~(uint64)EFER_LMA) | (vm->efer & EFER_LMA);
+  } else {
+    vm->regs.rax = (uint)vm->efer;
+    vm->regs.rdx = vm->efer >> 32;
+  }
+  return 0;
 }
 
 /*
@@ -719,8 +756,49 @@ vmxmsr(struct vm *vm, int write)
 static int
 vmxhandle(struct vm *vm, struct vmexit *e, uint inslen)
 {
-  /* HW1 part 5: write this function; see HW1.md. */
-  return 0;
+  switch (e->reason) {
+  case EXIT_EXTERNAL_INTR:
+    return 1;
+  case EXIT_EXCEPTION_NMI:
+    if (INTR_INFO_TYPE(e->intrinfo) == INTR_TYPE_NMI)
+      return 1;
+    return 0;
+  case EXIT_RDMSR:
+  case EXIT_WRMSR:
+    if (vmxmsr(vm, e->reason == EXIT_WRMSR) < 0)
+      return 0;
+    vm->rip += inslen;
+    return 1;
+  case EXIT_HLT:
+    vm->rip += inslen;
+    return 0;
+  case EXIT_IO:
+    e->io.size = (e->qual & 0x00000007) + 1; // 0 = 1-byte, 1 = 2-byte, 3 = 4-byte
+    e->io.in = e->qual & 0x00000008;         // 0=out, 1=in
+    // uint string = e->qual & 0x00000010;   // 0=not string, 1=string
+    // uint rep = e->qual & 0x00000020;      // 0=not REP, 1=REP
+    // uint encoding = e->qual & 0x00000040; // 0=DX, 1=immediate
+    e->io.port = (e->qual & 0xFFFF0000) >> 16; // port number
+
+    // 2. String instructions (INS, OUTS) move data between memory and the port. They need extra
+    // information (a memory address, a repeat count) that we do not decode. What should the
+    // kernel do when the string bit is set? Which return value, and does RIP move?
+
+    // 4. Advance the guest’s RIP past the instruction. Which value tells you how far? Look at
+    // what the other cases do.
+    vm->rip += inslen;
+
+    // 5. Decide what the kernel has to record, depending on direction:
+    if (~e->io.in) {
+      // as from helloguest.asm:   100080:	ee                   	out    %al,(%dx)
+      e->io.data = vm->regs.rax; // & iomask(e->io.size);
+    }
+
+    // 6. Return 0, so the exit reaches user space.
+    return 0;
+  default:
+    return 0;
+  }
 }
 
 /*
@@ -758,7 +836,7 @@ vmrun(int id, struct vmexit *ue)
      */
     pushcli();
     c = cpuid();
-    if(!cpus[c].vmx_ok || vmptrld(V2P(vm->vmcs)) < 0){
+    if (!cpus[c].vmx_ok || vmptrld(V2P(vm->vmcs)) < 0) {
       popcli();
       return -1;
     }
@@ -769,7 +847,7 @@ vmrun(int id, struct vmexit *ue)
      * (SDM 31.4.3.4: software must INVEPT when it changes mappings or
      * reuses an EPT root.)  One bit per CPU records that we did so.
      */
-    if(!(vm->flushed & (1 << c))){
+    if (!(vm->flushed & (1 << c))) {
       invept(INVEPT_SINGLE_CONTEXT, vm->eptp);
       vm->flushed |= 1 << c;
     }
@@ -834,8 +912,8 @@ vmrun(int id, struct vmexit *ue)
       e.rip = vm->rip;
     }
     /* Release the VMCS and turn interrupts back on (HW1 part 5, Step 8). */
-    popcli();  /* a pending host interrupt is delivered here */
     vmclear(V2P(vm->vmcs));
+    popcli(); // a pending host interrupt is delivered here
 
     /*
      * Failed entries and VMLAUNCH failures always go to user space.

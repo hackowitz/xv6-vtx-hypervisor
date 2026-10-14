@@ -171,7 +171,8 @@ stack pointer, however, depends on the entire call stack, which can and does cha
 > code passed `launched = 1` on the first entry?
 
 **Answer:** `vmclear(V2P(vm->vmcs));` wraps the assembly `vmclear` fucntion and clears the launch
-state after host interrupts are re-enabled. If VMRESUME were used instead of VMLAUNCH (when `launched = 1`) on an inactive/not current VM, the instruction would error.
+state _before_ host interrupts are re-enabled. If VMRESUME were used instead of VMLAUNCH (when
+`launched = 1`) on an inactive/not current VM, the instruction would error.
 
 ### Question 4.4
 
