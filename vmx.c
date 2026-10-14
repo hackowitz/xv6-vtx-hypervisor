@@ -257,8 +257,6 @@ void vmxinit(void) {
   }
   cpus[id].vmx_ok = 1; // mycpu()->vmx_ok = 1;
   cprintf("cpu%d: VMX enabled\n", id);
-  cprintf("dbg: cpu%d.MSR_IA32_FEATURE_CONTROL: 0x%x\n", id, (uint64)MSR_IA32_FEATURE_CONTROL);
-  cprintf("dbg: cpu%d.MSR_IA32_VMX_BASIC: 0x%x\n", id, (uint64)MSR_IA32_VMX_BASIC);
 }
 
 /*
@@ -800,9 +798,7 @@ vmrun(int id, struct vmexit *ue)
      * Returns 0 after a VM exit, or -1 if the entry instruction itself
      * failed (invalid controls or host/guest state).
      */
-    cprintf("dbg: enter vm\n");
     r = vmx_enter(&vm->regs, 0);
-    cprintf("dbg: entered vm\n");
     /*
      * Back in the host.  The VMCS is still current on this CPU, so
      * read everything we need now, before VMCLEAR.

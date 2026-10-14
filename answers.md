@@ -160,7 +160,8 @@ the guest stack would be corrupted with the host's value and could cause undefin
 > not? Describe a concrete situation in which the `HOST_RSP` written by
 > a previous entry would be wrong.
 
-**Answer:** (your answer)
+**Answer:** The instruction pointer is the same because `vmx_exit`'s address does not change. The
+stack pointer, however, depends on the entire call stack, which can and does change between calls.
 
 ### Question 4.3
 
@@ -169,7 +170,8 @@ the guest stack would be corrupted with the host's value and could cause undefin
 > `vmrun()` execute it? What would the VM-instruction error be if the
 > code passed `launched = 1` on the first entry?
 
-**Answer:** (your answer)
+**Answer:** `vmclear(V2P(vm->vmcs));` wraps the assembly `vmclear` fucntion and clears the launch
+state after host interrupts are re-enabled. If VMRESUME were used instead of VMLAUNCH (when `launched = 1`) on an inactive/not current VM, the instruction would error.
 
 ### Question 4.4
 
@@ -178,7 +180,9 @@ the guest stack would be corrupted with the host's value and could cause undefin
 > say what is different (CPU, process, or both) for each. What would
 > happen at the next VM exit if the field kept the old value?
 
-**Answer:** (your answer)
+**Answer:** The GDTR and IDTR can be different on different CPUs, and a different process may have
+a different CR3. If the old value was kept, the host could resume in an invalid state, and have
+undefined behavior.
 
 ## Part 5: Running the guest, the vmrun loop and exit handling
 
