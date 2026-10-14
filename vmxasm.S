@@ -50,6 +50,7 @@
 
 # Encoding of the VMCS field HOST_RSP (same value as in vmx.h). The
 # VMWRITE instruction takes the field encoding as a register operand.
+# hopefully ther complier recognized this as a macro and  not a comment
 #define HOST_RSP 0x6C14
 
 .globl vmx_enter
@@ -57,11 +58,19 @@ vmx_enter:
   # On entry (System V AMD64 calling convention): %rdi = regs (first
   # argument), %esi = launched (second argument), return address at
   # (%rsp). The callee-saved registers are %rbx, %rbp, %r12-%r15.
-  #
-  # YOUR CODE, block A (HW1 part 4): save the host's callee-saved
-  # registers and regs on the stack, and write %rsp into the VMCS field
-  # HOST_RSP.
-  #   example, one line of it:  pushq %rbp   (saves the host's %rbp)
+
+  # Save the host's callee-saved registers and regs on the stack
+  # as in swtch.S
+  pushq %rbp
+  pushq %rbx
+  pushq %r12
+  pushq %r13
+  pushq %r14
+  pushq %r15
+  pushq %rdi  # `regs` argument
+  # Write %rsp into the VMCS field HOST_RSP.
+  movq $HOST_RSP, %rax
+  vmwrite %rsp, %rax
 
   # Test 'launched' now: the movs below don't change the flags.
   # %esi is about to be overwritten by the guest's RSI, so its zero /
@@ -75,6 +84,21 @@ vmx_enter:
   # flags set by the testl above must survive until the jnz below.
   #   example, one line of it:  movq 8(%rdi), %rbx
   #   (%rbx = the 8 bytes at address regs + 8: the guest's rbx)
+  movq   0(%rdi), %rax
+  movq   8(%rdi), %rbx
+  movq  16(%rdi), %rcx
+  movq  24(%rdi), %rdx
+  movq  32(%rdi), %rsi
+  movq  48(%rdi), %rbp
+  movq  56(%rdi),  %r8
+  movq  72(%rdi),  %r9
+  movq  80(%rdi), %r10
+  movq  88(%rdi), %r11
+  movq  96(%rdi), %r12
+  movq 104(%rdi), %r13
+  movq 112(%rdi), %r14
+  movq 120(%rdi), %r15
+  movq  40(%rdi), %rdi  # must be last because rdi is used here
 
   # Enter the guest. ZF still holds the result of testl above.
   jnz   1f                    # launched != 0: already launched, resume
@@ -115,8 +139,38 @@ vmx_enter:
 # Nothing else has changed: %rax..%r15 still hold the guest's values.
 .globl vmx_exit
 vmx_exit:
-  # YOUR CODE (HW1 part 4): save the guest's 15 general-purpose
-  # registers into *regs, restore the host's callee-saved registers,
-  # return 0 from vmx_enter.
-  #   example, one line of it:  movq %rbx, 8(%rdi)
-  #   (the 8 bytes at address regs + 8 = the guest's rbx, if %rdi = regs)
+  pushq %rdi          # stash guest %rdi...
+  movq 8(%rsp), %rdi  # ... so we can load our own
+
+  # Save the guest's 15 general-purpose registers into *regs
+  movq %rax,   0(%rdi)
+  movq %rbx,   8(%rdi)
+  movq %rcx,  16(%rdi)
+  movq %rdx,  24(%rdi)
+  movq %rsi,  32(%rdi)
+  # ...       40(%rdi)  # stashed value handled below
+  movq %rbp,  48(%rdi)
+  movq  %r8,  56(%rdi)
+  movq  %r9,  72(%rdi)
+  movq %r10,  80(%rdi)
+  movq %r11,  88(%rdi)
+  movq %r12,  96(%rdi)
+  movq %r13, 104(%rdi)
+  movq %r14, 112(%rdi)
+  movq %r15, 120(%rdi)
+
+  popq %rax  # un-stash guest %rdi
+  movq %rax,  40(%rdi)
+
+  # Restore the host's callee-saved registers,
+  addq $8, %rsp  # we've already loaded %rdi
+  popq %r15
+  popq %r14
+  popq %r13
+  popq %r12
+  popq %rbx
+  popq %rbp
+
+  # Return 0 from vmx_enter.
+  xorl %eax, %eax
+  ret

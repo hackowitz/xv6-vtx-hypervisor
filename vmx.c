@@ -424,10 +424,31 @@ static int vmcsinit(struct vm *vm) {
  *
  * Called by vmrun() with interrupts off and the VMCS current.
  */
-static void
-vmxhoststate(void)
-{
-  /* HW1 part 4: write this function; see HW1.md. */
+static void vmxhoststate(void) {
+  struct cpu *c = mycpu();
+  // Control registers
+  vmwrite(HOST_CR0, rcr0());
+  vmwrite(HOST_CR3, rcr3());
+  vmwrite(HOST_CR4, rcr4());
+  // Selectors
+  vmwrite(HOST_CS_SELECTOR, SEG_KCODE << 3);
+  vmwrite(HOST_SS_SELECTOR, 0);
+  vmwrite(HOST_DS_SELECTOR, 0);
+  vmwrite(HOST_ES_SELECTOR, 0);
+  vmwrite(HOST_FS_SELECTOR, 0);
+  vmwrite(HOST_GS_SELECTOR, 0);
+  vmwrite(HOST_TR_SELECTOR, SEG_TSS << 3);
+  // Segment bases
+  vmwrite(HOST_FS_BASE, rdmsr(MSR_IA32_FS_BASE));
+  vmwrite(HOST_GS_BASE, rdmsr(MSR_IA32_GS_BASE));
+  vmwrite(HOST_TR_BASE, (uint64)&c->ts);
+  vmwrite(HOST_GDTR_BASE, (uint64)c->gdt);
+  vmwrite(HOST_IDTR_BASE, (uint64)idt);
+  // MSRs/EFERs
+  vmwrite(HOST_IA32_SYSENTER_CS, 0);
+  vmwrite(HOST_IA32_SYSENTER_EIP, 0);
+  vmwrite(HOST_IA32_SYSENTER_ESP, 0);
+  vmwrite(HOST_IA32_EFER, rdmsr(EFER_MSR));
 }
 
 /*
