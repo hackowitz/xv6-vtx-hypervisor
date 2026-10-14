@@ -100,7 +100,11 @@ expect if it were running unvirtualized.
 > `want` has a bit that `high` has cleared, and why is returning an error
 > better than silently dropping the bit?
 
-**Answer:** (your answer)
+**Answer:** `... | low` lets `low` set bits as required, and `& high` lets `high` unset bits as
+required. If the CPU doens't support a capability we "want" (need), we will inevitably fail, and
+should do so now we've cound out, rather than act surprised later when the hardware can't do what
+we knew the whole time it couldn't. Vice versa, if the CPU requires a control we don't use, an
+error isn't guaranteed and we can carry on unbothered.
 
 ### Question 3.2
 
@@ -109,7 +113,9 @@ expect if it were running unvirtualized.
 > is 0? Why is the all-ones setting more useful to someone debugging a
 > guest?
 
-**Answer:** (your answer)
+**Answer:** If the host lets the guest handle interrupts - and the guest does nothing, the interrupt
+is fatal to the guest and there is no trace. Since we know our guest does no error handling, we
+capture the errors ourselves.
 
 ### Question 3.3
 
@@ -117,7 +123,8 @@ expect if it were running unvirtualized.
 > about what the CPU does with a guest linear address when `CR0.PG = 0`
 > (SDM 28.6).
 
-**Answer:** (your answer)
+**Answer:** If the "unrestricted" guest can run without paging "guest physical" memory, a mapping of
+guest physical to host physical is the only protection against the guest controlling host memory.
 
 ### Question 3.4
 
@@ -125,7 +132,12 @@ expect if it were running unvirtualized.
 > Which two VMCS fields make that work? What happens if the guest tries to
 > set `CR4.VMXE` to 1, and why do we not let it?
 
-**Answer:** (your answer)
+**Answer:** The bit indicates that the guest is being virtualized, which is itself sensitive
+information. `CR4_GUEST_HOST_MASK` controls which bits the guest may write and which bits trigger a
+VM exit for the host to virtualize. `CR4_READ_SHADOW` holds the virtual value for the masked bits,
+to present to theguest instead of the true, sensitive, values. Since we do not want to support
+nested virtualization, the guest should not think it is in a machine that supports VMX, and so
+`VMXE` should always appear unset.
 
 ## Part 4: Entering and leaving the guest
 
@@ -136,7 +148,10 @@ expect if it were running unvirtualized.
 > CPU keep it instead, and what would go wrong if `vmx_exit` tried to
 > store `%rsp` into `*regs` like the others?
 
-**Answer:** (your answer)
+**Answer:** The VMCS region holds the guest stack pointer. This is important since `vmx_exit` lives
+in the host, and `%rsp` must point to it's own stack. Otherwise, `vmx_exit` would not know where to
+find any of the host values. If `vmx_exit` accidentally stored it's own `%rsp` as a guest register,
+the guest stack would be corrupted with the host's value and could cause undefined behavior.
 
 ### Question 4.2
 
