@@ -91,13 +91,13 @@ vmx_enter:
   movq  32(%rdi), %rsi
   movq  48(%rdi), %rbp
   movq  56(%rdi),  %r8
-  movq  72(%rdi),  %r9
-  movq  80(%rdi), %r10
-  movq  88(%rdi), %r11
-  movq  96(%rdi), %r12
-  movq 104(%rdi), %r13
-  movq 112(%rdi), %r14
-  movq 120(%rdi), %r15
+  movq  64(%rdi),  %r9
+  movq  72(%rdi), %r10
+  movq  80(%rdi), %r11
+  movq  88(%rdi), %r12
+  movq  96(%rdi), %r13
+  movq 104(%rdi), %r14
+  movq 112(%rdi), %r15
   movq  40(%rdi), %rdi  # must be last because rdi is used here
 
   # Enter the guest. ZF still holds the result of testl above.
@@ -151,13 +151,13 @@ vmx_exit:
   # ...       40(%rdi)  # stashed value handled below
   movq %rbp,  48(%rdi)
   movq  %r8,  56(%rdi)
-  movq  %r9,  72(%rdi)
-  movq %r10,  80(%rdi)
-  movq %r11,  88(%rdi)
-  movq %r12,  96(%rdi)
-  movq %r13, 104(%rdi)
-  movq %r14, 112(%rdi)
-  movq %r15, 120(%rdi)
+  movq  %r9,  64(%rdi)
+  movq %r10,  72(%rdi)
+  movq %r11,  80(%rdi)
+  movq %r12,  88(%rdi)
+  movq %r13,  96(%rdi)
+  movq %r14, 104(%rdi)
+  movq %r15, 112(%rdi)
 
   popq %rax  # un-stash guest %rdi
   movq %rax,  40(%rdi)
