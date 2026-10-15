@@ -16,23 +16,24 @@
 // port in DX (or as an 8-bit immediate when it is a small constant).
 // The instruction touches no memory, but "volatile" keeps the compiler
 // from deleting or reordering it, since it has a side effect.
-static inline void
-outb(unsigned short port, unsigned char data)
-{
+static inline void outb(unsigned short port, unsigned char data) {
   asm volatile("outb %0, %1" : : "a" (data), "Nd" (port));
+}
+
+static inline unsigned char inb(unsigned short port) {
+  unsigned char data;
+  asm volatile("inb %1, %0" : "=a"(data) : "Nd"(port));
+  return data;
 }
 
 // Called from the trampoline (helloguestasm.S) once the CPU is in
 // 64-bit mode with a stack. When it returns, the trampoline halts.
-void
-guestmain(void)
-{
+void guestmain(void) {
   const char *s;
-
-  // Send each character of the message, up to the terminating NUL,
-  // to COM1. A real driver would first poll the line status register
-  // (port COM1+5) for "transmitter empty"; runvm always says yes, so
-  // we skip that and just write.
-  for(s = "Hello from a VT-x guest\n"; *s; s++)
+  // Poll the line status register (port COM1+5) and wait for "transmitter empty"
+  for (; (inb(COM1 + 5) & 0x40) != 0x40;)
+    ;
+  // Send each character of the message, up to the terminating NUL, to COM1.
+  for (s = "Hello from a VT-x guest\n"; *s; s++)
     outb(COM1, *s);
 }

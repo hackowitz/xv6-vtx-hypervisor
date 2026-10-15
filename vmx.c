@@ -710,11 +710,7 @@ vmgetreg(int id, int reg, uint64 *val)
 }
 
 /* Mask for the low `size` bytes (1, 2 or 4) of an I/O access. */
-static uint64
-iomask(int size)
-{
-  return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFF;
-}
+static uint64 iomask(int size) { return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFF; }
 
 /*
  * Emulate RDMSR/WRMSR.  Only IA32_EFER is supported, which the guest's
@@ -770,10 +766,10 @@ vmxhandle(struct vm *vm, struct vmexit *e, uint inslen)
     e->io.in = e->qual & 0x00000008;           // 0=out, 1=in
     e->io.port = (e->qual & 0xFFFF0000) >> 16; // port number
 
-    if (e->qual & 0x10) // 0=not string, 1=string
-      return 1;         // kernel doesn't handle string; give it to user space and fail there
-    if (e->io.in)       //
-      return 1;         // kernel doesn't handle io in - give it to user space and fail there
+    if (e->io.in) {
+      return 0;
+    } else if (e->qual & 0x10) // 0=not string, 1=string
+      return 1;                // kernel doesn't handle string or io in; give it to user space
     else                // kernel _does_ handle character output
       e->io.data = vm->regs.rax & iomask(e->io.size);
     return 0;

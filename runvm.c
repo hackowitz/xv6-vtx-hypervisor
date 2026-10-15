@@ -41,9 +41,9 @@
 #include "vmxapi.h"
 
 /* I/O port of the first serial port (UART 8250/16550) on a PC. */
-#define COM1 0x3f8
+#define COM1 0x03f8
 /* Upper bound on the image size; the image is read into a static buffer. */
-#define MAXIMAGE (256*1024)
+#define MAXIMAGE (256 << 10)
 
 /* Buffer for the guest image, passed to vmcreate() (a system call). */
 static char image[MAXIMAGE];
@@ -51,11 +51,19 @@ static char image[MAXIMAGE];
 /*
  * Give the guest the result of an IN of `size` bytes (1, 2 or 4) by
  * writing it into the guest's RAX (vmgetreg, vmsetreg).
- * HW1 part 6: write this function; see HW1.md.
  */
-static void
-completein(int vm, int size, uint val)
-{
+static void completein(int vm, int size, uint val) {
+  uint64 rax;
+  // A 32-bit write to EAX zero-extends into the upper 32 bits of RAX.
+  // An 8-bit or 16-bit write (to AL or AX) leaves the other bytes of RAX unchanged.
+  if (size == 4)
+    vmsetreg(vm, VMREG_RAX, (uint64)val);
+  else if (vmgetreg(vm, VMREG_RAX, &rax) < 0)
+    printf(2, "runvm: vmgetreg failed");
+  else if (size == 1)
+    vmsetreg(vm, VMREG_RAX, ((uint64)val & 0x000000FF) | (rax & 0xFFFFFF00));
+  else // size == 2
+    vmsetreg(vm, VMREG_RAX, ((uint64)val & 0x0000FFFF) | (rax & 0xFFFF0000));
 }
 
 /*
@@ -69,40 +77,33 @@ completein(int vm, int size, uint val)
  * For an IN, we must supply the value the guest reads, by writing it
  * into the guest's RAX (completein) before the next vmrun().
  */
-static void
-doio(int vm, struct vmexit *e)
-{
-  char c;
-
+static void doio(int vm, struct vmexit *e) {
   /* OUT to the UART's transmit register: print the byte on our console
    * (file descriptor 1). This is how the guest's text reaches the user. */
-  if(e->io.port == COM1 && !e->io.in){
-    c = e->io.data;
-    write(1, &c, 1);
+  if (e->io.port == COM1 && !e->io.in) {
+    write(1, &e->io.data, 1);
     return;
   }
   /* IN from the line status register (COM1+5): a real driver polls this
    * until the "transmitter empty" bits (0x20 THRE, 0x40 TEMT) are set.
    * We are always ready to accept a byte, so report both bits. */
-  if(e->io.port == COM1 + 5 && e->io.in){
-    completein(vm, e->io.size, 0x60);  // line status: transmitter empty
+  if (e->io.port == COM1 + 5 && e->io.in) {
+    completein(vm, e->io.size, 0x60); // line status: transmitter empty
     return;
   }
   /* Any other IN targets a port with no device behind it. Real buses
    * return all ones for such reads; OUTs to unknown ports are ignored. */
-  if(e->io.in)
-    completein(vm, e->io.size, 0xFFFFFFFF);  // no device: reads float high
+  if (e->io.in)
+    completein(vm, e->io.size, 0xFFFFFFFF); // no device: reads float high
 }
 
-int
-main(int argc, char *argv[])
-{
-  struct vmexit e;   /* filled in by the kernel at every VM exit */
+int main(int argc, char *argv[]) {
+  struct vmexit e; /* filled in by the kernel at every VM exit */
   int fd, n, len, vm, memmb;
 
   /* Command line: the image file, and optionally the size of guest
    * physical memory in megabytes. */
-  if(argc < 2 || argc > 3){
+  if (argc < 2 || argc > 3) {
     printf(2, "usage: runvm image [memory-MB]\n");
     exit();
   }
@@ -111,15 +112,15 @@ main(int argc, char *argv[])
   /* Read the whole image into memory. The kernel never opens files on
    * behalf of the hypervisor, so the monitor does the file I/O. The loop
    * reads until end of file or until the buffer is full. */
-  if((fd = open(argv[1], O_RDONLY)) < 0){
+  if ((fd = open(argv[1], O_RDONLY)) < 0) {
     printf(2, "runvm: cannot open %s\n", argv[1]);
     exit();
   }
-  for(len = 0; len < MAXIMAGE && (n = read(fd, image + len, MAXIMAGE - len)) > 0; len += n)
+  for (len = 0; len < MAXIMAGE && (n = read(fd, image + len, MAXIMAGE - len)) > 0; len += n)
     ;
   close(fd);
   /* A full buffer means the file may have been truncated; refuse. */
-  if(len == MAXIMAGE){
+  if (len == MAXIMAGE) {
     printf(2, "runvm: %s is larger than %d bytes\n", argv[1], MAXIMAGE);
     exit();
   }
@@ -129,7 +130,7 @@ main(int argc, char *argv[])
    * memmb megabytes of guest memory, and copies the image to
    * guest-physical address VM_LOAD_ADDR. Returns a VM id, like a file
    * descriptor, used by the other calls. */
-  if((vm = vmcreate(image, len, memmb * 1024 * 1024)) < 0){
+  if ((vm = vmcreate(image, len, memmb << 20)) < 0) {
     printf(2, "runvm: vmcreate failed\n");
     exit();
   }
@@ -143,7 +144,7 @@ main(int argc, char *argv[])
   /* Step 3: the run loop. Each vmrun() executes the guest until a VM
    * exit that the kernel cannot handle itself. */
   for (;;) {
-    if(vmrun(vm, &e) < 0){
+    if (vmrun(vm, &e) < 0) {
       printf(2, "runvm: vmrun failed\n");
       exit();
     }
@@ -151,13 +152,12 @@ main(int argc, char *argv[])
      * reason field then is the failure code, e.g. 33 for invalid guest
      * state; qual says which check failed. Usually a bug in the
      * guest-state setup. */
-    if(e.entryfail){
-      printf(2, "runvm: VM entry failed, reason %d, qualification 0x%x\n",
-             e.reason, e.qual);
+    if (e.entryfail) {
+      printf(2, "runvm: VM entry failed, reason %d, qualification 0x%x\n", e.reason, e.qual);
       exit();
     }
     /* Dispatch on the basic exit reason (EXIT_* in vmxapi.h). */
-    switch(e.reason){
+    switch (e.reason) {
     case EXIT_IO:
       /* The guest executed IN or OUT: emulate the device, then resume
        * the guest (the continue goes to the next vmrun()). */
@@ -179,8 +179,13 @@ main(int argc, char *argv[])
       /* The guest took a CPU exception. The hypervisor intercepts all
        * of them since the guest has no IDT. The low 8 bits of the
        * interruption information are the vector (14 = page fault...). */
-      printf(2, "runvm: guest exception %d, error code 0x%x, rip 0x%x\n",
-             e.intrinfo & 0xff, (uint64)e.intrerr, e.rip);
+      printf(
+          2,
+          "runvm: guest exception %d, error code 0x%x, rip 0x%x\n",
+          e.intrinfo & 0xff,
+          (uint64)e.intrerr,
+          e.rip
+      );
       exit();
     case EXIT_TRIPLE_FAULT:
       /* The guest faulted while delivering a fault; a real CPU would
@@ -191,14 +196,12 @@ main(int argc, char *argv[])
       /* The guest touched guest-physical memory that has no EPT
        * mapping, i.e. beyond the memory size given to vmcreate(). gpa
        * is the offending guest-physical address. */
-      printf(2, "runvm: EPT violation at guest-physical 0x%x, rip 0x%x\n",
-             e.gpa, e.rip);
+      printf(2, "runvm: EPT violation at guest-physical 0x%x, rip 0x%x\n", e.gpa, e.rip);
       exit();
     }
     /* Any other reason (CPUID, a WRMSR the kernel does not emulate,
      * ...) is not supported by this monitor: report it and give up. */
-    printf(2, "runvm: unhandled exit %d, qualification 0x%x, rip 0x%x\n",
-           e.reason, e.qual, e.rip);
+    printf(2, "runvm: unhandled exit %d, qualification 0x%x, rip 0x%x\n", e.reason, e.qual, e.rip);
     exit();
   }
 }
