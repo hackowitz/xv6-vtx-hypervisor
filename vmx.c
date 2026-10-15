@@ -402,14 +402,6 @@ static int vmcsinit(struct vm *vm) {
       guestseg(seg, 0x10, 0, 0xFFFFFFFF, AR_DATA32);
   guestseg(SEG_LDTR, 0, 0, 0, AR_UNUSABLE);
   guestseg(SEG_TR, 0, 0, 0xFFFF, AR_TSS32_BUSY);
-
-  cprintf(
-      "vmcs: cpu2=0x%x cr0=0x%x cr4=0x%x link=0x%x\n",
-      vmread(SECONDARY_VM_EXEC_CONTROL),
-      vmread(GUEST_CR0),
-      vmread(GUEST_CR4),
-      vmread(VMCS_LINK_POINTER)
-  );
   return 0;
 }
 
@@ -773,28 +765,17 @@ vmxhandle(struct vm *vm, struct vmexit *e, uint inslen)
     vm->rip += inslen;
     return 0;
   case EXIT_IO:
-    e->io.size = (e->qual & 0x00000007) + 1; // 0 = 1-byte, 1 = 2-byte, 3 = 4-byte
-    e->io.in = e->qual & 0x00000008;         // 0=out, 1=in
-    // uint string = e->qual & 0x00000010;   // 0=not string, 1=string
-    // uint rep = e->qual & 0x00000020;      // 0=not REP, 1=REP
-    // uint encoding = e->qual & 0x00000040; // 0=DX, 1=immediate
+    vm->rip += inslen;
+    e->io.size = (e->qual & 0x00000007) + 1;   // 0 = 1-byte, 1 = 2-byte, 3 = 4-byte
+    e->io.in = e->qual & 0x00000008;           // 0=out, 1=in
     e->io.port = (e->qual & 0xFFFF0000) >> 16; // port number
 
-    // 2. String instructions (INS, OUTS) move data between memory and the port. They need extra
-    // information (a memory address, a repeat count) that we do not decode. What should the
-    // kernel do when the string bit is set? Which return value, and does RIP move?
-
-    // 4. Advance the guest’s RIP past the instruction. Which value tells you how far? Look at
-    // what the other cases do.
-    vm->rip += inslen;
-
-    // 5. Decide what the kernel has to record, depending on direction:
-    if (~e->io.in) {
-      // as from helloguest.asm:   100080:	ee                   	out    %al,(%dx)
-      e->io.data = vm->regs.rax; // & iomask(e->io.size);
-    }
-
-    // 6. Return 0, so the exit reaches user space.
+    if (e->qual & 0x10) // 0=not string, 1=string
+      return 1;         // kernel doesn't handle string; give it to user space and fail there
+    if (e->io.in)       //
+      return 1;         // kernel doesn't handle io in - give it to user space and fail there
+    else                // kernel _does_ handle character output
+      e->io.data = vm->regs.rax & iomask(e->io.size);
     return 0;
   default:
     return 0;
