@@ -245,7 +245,11 @@ VM exits for the `out` instruction, which are only 1 byte.
 > And why does `completein()` read RAX with `vmgetreg()` for a 1-byte
 > `IN` but not for a 4-byte one?
 
-**Answer:** (your answer)
+**Answer:** We are emulating the guest instruction which sets the guest register, so we set the
+guest register via `vmsetreg`. A return value from `completein` or `doio` has no meaning and does
+nothing to this end. A 1- or 2-byte IN _modifies_ the guest's RAX, so it neeeds to read the value
+to change it beffore writing. A 4-byte IN zero-extends the rest of RAX, so there is no need to
+read the unused value.
 
 ### Question 6.2
 
@@ -254,7 +258,10 @@ VM exits for the `out` instruction, which are only 1 byte.
 > guest that will go wrong and say why. (Look at the page tables, the
 > `gdtdesc`, and where the first instruction is.)
 
-**Answer:** (your answer)
+**Answer:** `VM_LOAD_ADDR` would point to unused memory below the beginning of the program. This
+would cause the page table, GDT, etc. to link to empty space and be initialized to 0 instead of
+the data from the `.data` section. Jumps, like the `ljump` to `start62` and `call guestmain`
+would also sump to empty memory below the start of the program, and `RIP` would execude a long series of no-ops before re-entering the program at `start` instead of the intended location.
 
 ### Question 6.3
 
@@ -263,7 +270,8 @@ VM exits for the `out` instruction, which are only 1 byte.
 > `runvm helloguest 1` experiment: which message do you get, and which
 > check in the kernel produces it?
 
-**Answer:** (your answer)
+**Answer:** I think the processor would not set LMA, so it the guest wouldn't enter 32-bit
+compatibility mode. When I changed the order/locations of the steps, `runvm helloguest 1` still fails with a `bad memory requirement` and `runvm helloguest` crashes with exception 13.
 
 ### Question 6.4
 
@@ -272,4 +280,7 @@ VM exits for the `out` instruction, which are only 1 byte.
 > put the serial port in `runvm` and not in the kernel? What would you
 > gain, and what would you lose, by emulating it inside the kernel?
 
-**Answer:** (your answer)
+**Answer:** Emulation is the role of thee hypervisor - the kernel just proxies the sensitive VMX
+instructions. Moving this into the kernel would simplify the call stack, remove some system calls,
+and so gain a small speedup - at the expense of precluding the hypervisor from filling its intended
+role of hardware emulation.

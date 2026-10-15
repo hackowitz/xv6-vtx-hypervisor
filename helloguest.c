@@ -9,7 +9,7 @@
 // hands it to the user-level monitor runvm.c, which prints the byte.
 
 // I/O port of COM1, the first PC serial port. runvm.c emulates it.
-#define COM1 0x3f8
+#define COM1 0x03f8
 
 // Write one byte to an I/O port with the OUT instruction.
 // "a" puts data in AL (OUT takes its value from AL) and "Nd" puts the
