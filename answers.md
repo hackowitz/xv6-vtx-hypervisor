@@ -4,8 +4,8 @@ Fill in this file and hand it in with your code. Replace each
 `(your answer)` with two or three sentences. Keep the question numbers
 (part.question), and do not delete the questions.
 
-- **Name:**
-- **Machine and environment you tested on** (CADE lab machine with QEMU, or Bochs):
+- **Name:** Noah Jackowitz
+- **Machine and environment you tested on:** x86 Kubuntu Linux PC with QEMU on KVM
 - **How far did you get?** (for example "all six parts work", or "stuck in part 4, block B"):
 
 
@@ -193,7 +193,15 @@ undefined behavior.
 > concrete sequence of events, with two CPUs, in which the opposite
 > order corrupts the VMCS. Which sentence of SDM 27.11.1 do you rely on?
 
-**Answer:** (your answer)
+**Answer:** If `popcli()` occurs first and a pending interrupt causes the kernel to resume
+execution on the other CPU, the VMCS may be active on both processors and become corrupted. Rather,
+`vmclear` should be used to deactivate the VMCS and write it to memory first, before allowing an
+interrupt that could switch CPUs or processes. Per the SDM:
+
+> If a VMCS is to be “migrated” from one logical processor to another, the first logical processor
+> should execute VMCLEAR for the VMCS (to make it inactive on that logical processor and to ensure
+> that all VMCS data are in memory) before the other logical processor executes VMPTRLD for the
+> VMCS (to make it active on the second logical processor).
 
 ### Question 5.2
 
@@ -202,7 +210,9 @@ undefined behavior.
 > the VMCS loaded between exits and used `VMRESUME` instead? What would
 > we give up?
 
-**Answer:** (your answer)
+**Answer:** We would skip running `vmclear` so the VMCS is still active on the current CPU. We
+would not be able to resume on a different CPU, since the VMCS is never cleared, but this could
+save some overhead.
 
 ### Question 5.3
 
@@ -211,7 +221,9 @@ undefined behavior.
 > Where and when exactly does the host handle it? What would change if
 > the exit control "acknowledge interrupt on exit" were set?
 
-**Answer:** (your answer)
+**Answer:** The kernel does nothing itself in `vmxhandle`, but returns to the user program which
+may handle the interrupt. If "acknowledge interrupts on exit" were set, the kernel should
+acknowledge the interrupt, likely storing the interrupt data for the user code to handle.
 
 ### Question 5.4
 
@@ -220,7 +232,9 @@ undefined behavior.
 > length (for instance 2) instead? Name one instruction in `helloguestasm.S`
 > or `helloguest.c` that shows the problem.
 
-**Answer:** (your answer)
+**Answer:** If the instruction length weren't exactly 2, this woulkd move the instruction pointer
+to the wrong location and cause undefined behavior in the guest. This would cause an error with the
+VM exits for the `out` instruction, which are only 1 byte.
 
 ## Part 6: The other half: the monitor (runvm) and the guest
 
