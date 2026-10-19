@@ -6,7 +6,8 @@ Fill in this file and hand it in with your code. Replace each
 
 - **Name:** Noah Jackowitz
 - **Machine and environment you tested on:** x86 Kubuntu Linux PC with QEMU on KVM
-- **How far did you get?** (for example "all six parts work", or "stuck in part 4, block B"):
+- **How far did you get?** All six parts work, and I added a wait for transmitter empty in
+  `helloguest` to get some practical usage from `EXIT_IO` _in_ from the status line register.
 
 
 ## Part 1: Entering VMX operation
