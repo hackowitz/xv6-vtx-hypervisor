@@ -207,7 +207,8 @@ invept(uint64 type, uint64 eptp)
  * leaves the flag clear, so vmcreate()/vmrun() will refuse to work.
  * The steps follow SDM 26.7 ("Enabling and Entering VMX Operation").
  */
-void vmxinit(void) {
+void
+vmxinit(void) {
   // 1. check that the CPU supports VMX;
   uint a, b, c, d;
   uint64 fc, cr0, cr4;
@@ -276,7 +277,8 @@ void vmxinit(void) {
  * the value to write to the VMCS.  Returns 0, or -1 if some wanted
  * control is unsupported.  Called only by vmcsinit().
  */
-static int adjustctl(uint msr, uint want, uint *ctl) {
+static int
+adjustctl(uint msr, uint want, uint *ctl) {
   uint64 cap = rdmsr(msr);
   uint v = (want | (uint)cap) & (uint)(cap >> 32);
   if ((v & want) != want) {
@@ -315,7 +317,8 @@ guestseg(int seg, uint sel, uint64 base, uint limit, uint ar)
  * is rewritten by vmrun() before each entry.  Returns 0, or -1 if the
  * CPU lacks a control we need.
  */
-static int vmcsinit(struct vm *vm) {
+static int
+vmcsinit(struct vm *vm) {
   int seg, t = (rdmsr(MSR_IA32_VMX_BASIC) & VMX_BASIC_TRUE_CTLS) != 0;
   uint pin, cpu, cpu2, exitctl, entryctl;
 
@@ -414,7 +417,8 @@ static int vmcsinit(struct vm *vm) {
  *
  * Called by vmrun() with interrupts off and the VMCS current.
  */
-static void vmxhoststate(void) {
+static void
+vmxhoststate(void) {
   struct cpu *c = mycpu();
   // Control registers
   vmwrite(HOST_CR0, rcr0());
@@ -454,7 +458,8 @@ static void vmxhoststate(void) {
  * page offset.  An entry is "present" if any of its R/W/X bits is set.
  * Used by vmcreate() to map guest memory and to load the image.
  */
-static uint64* eptwalk(uint64 *pml4, uint64 gpa, int alloc) {
+static uint64 *
+eptwalk(uint64 *pml4, uint64 gpa, int alloc) {
   uint64 *table = pml4, *e;
   char *next;
   int level;
@@ -710,7 +715,10 @@ vmgetreg(int id, int reg, uint64 *val)
 }
 
 /* Mask for the low `size` bytes (1, 2 or 4) of an I/O access. */
-static uint64 iomask(int size) { return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFF; }
+static uint64
+iomask(int size) {
+  return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 0xFFFFFFFF;
+}
 
 /*
  * Emulate RDMSR/WRMSR.  Only IA32_EFER is supported, which the guest's
@@ -719,7 +727,8 @@ static uint64 iomask(int size) { return size == 1 ? 0xFF : size == 2 ? 0xFFFF : 
  * handled, or -1 to send the exit to user space.  Called by
  * vmxhandle(); write is nonzero for WRMSR.
  */
-static int vmxmsr(struct vm *vm, int write) {
+static int
+vmxmsr(struct vm *vm, int write) {
   uint64 val;
   if ((uint)vm->regs.rcx != EFER_MSR)
     return -1;
