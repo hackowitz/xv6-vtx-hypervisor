@@ -51,6 +51,7 @@ static char image[MAXIMAGE];
 /*
  * Give the guest the result of an IN of `size` bytes (1, 2 or 4) by
  * writing it into the guest's RAX (vmgetreg, vmsetreg).
+ *
  */
 static void completein(int vm, int size, uint val) {
   uint64 rax;
@@ -61,9 +62,9 @@ static void completein(int vm, int size, uint val) {
   else if (vmgetreg(vm, VMREG_RAX, &rax) < 0)
     printf(2, "runvm: vmgetreg failed");
   else if (size == 1)
-    vmsetreg(vm, VMREG_RAX, ((uint64)val & 0x000000FF) | (rax & 0xFFFFFF00));
+    vmsetreg(vm, VMREG_RAX, ((uint64)val & 0x000000FFULL) | (rax & ~0x000000FFULL));
   else // size == 2
-    vmsetreg(vm, VMREG_RAX, ((uint64)val & 0x0000FFFF) | (rax & 0xFFFF0000));
+    vmsetreg(vm, VMREG_RAX, ((uint64)val & 0x0000FFFFULL) | (rax & ~0x0000FFFFULL));
 }
 
 /*
