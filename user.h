@@ -28,6 +28,10 @@ int vmcreate(void*, int, int);
 int vmsetreg(int, int, uint64);
 int vmrun(int, struct vmexit*);
 int vmgetreg(int, int, uint64*);
+int vmmem(int, uint64, void*, int, int);
+int vminject(int, int);
+int fdready(int);
+int consraw(int);
 
 // ulib.c
 int stat(const char*, struct stat*);

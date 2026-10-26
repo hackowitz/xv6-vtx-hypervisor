@@ -24,6 +24,8 @@ void            bwrite(struct buf*);
 void            consoleinit(void);
 void            cprintf(char*, ...);
 void            consoleintr(int(*)(void));
+void            consraw(int);
+int             consready(void);
 void            panic(char*) __attribute__((noreturn));
 
 // exec.c
@@ -104,6 +106,7 @@ int             pipealloc(struct file**, struct file**);
 void            pipeclose(struct pipe*, int);
 int             piperead(struct pipe*, char*, int);
 int             pipewrite(struct pipe*, char*, int);
+int             pipeready(struct pipe*);
 
 //PAGEBREAK: 16
 // proc.c
@@ -195,6 +198,8 @@ int             vmcreate(char*, int, int);
 int             vmsetreg(int, int, uint64);
 int             vmrun(int, struct vmexit*);
 int             vmgetreg(int, int, uint64*);
+int             vmmem(int, uint64, char*, int, int);
+int             vminject(int, int);
 void            vmxfreeproc(struct proc*);
 
 // number of elements in fixed-size array

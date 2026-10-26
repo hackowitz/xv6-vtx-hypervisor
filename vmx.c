@@ -78,7 +78,72 @@ struct vm {
   struct guestregs regs;
   uint64 rip, rsp, rflags, efer;
   uint flushed;            /* CPUs where INVEPT has run for this EPTP */
+  /*
+   * HW2. More guest state, saved at each exit: the control registers
+   * (vmmem() walks the guest's page tables with them), and what
+   * interrupt injection needs.
+   */
+  /*
+   * Copies of the GUEST_CR0, GUEST_CR3 and GUEST_CR4 fields, which every
+   * exit fills with the guest's real control registers (SDM 30.3.1).
+   * vmmem() needs CR0.PG and CR3 to walk the guest's page tables, and it
+   * runs between vmrun() calls, when no VMCS is current and VMREAD would
+   * fail, so they are saved here.
+   */
+  uint64 cr0, cr3, cr4;
+  /*
+   * Copy of the guest interruptibility-state field (SDM 27.4.2, Table
+   * 27-3), saved at each exit (SDM 30.3.4): bit 0 is blocking by STI,
+   * bit 1 blocking by MOV SS.  vmxinject() reads it to decide whether
+   * an interrupt may be injected.  It is never written back: the VMCS
+   * keeps its own copy of the field across VMCLEAR and VMPTRLD.
+   */
+  uint intrstate;          /* guest interruptibility state (STI, MOV SS) */
+  /*
+   * The original-event identification field (called IDT-vectoring
+   * information in older SDMs; SDM 27.9.3, Table 27-21) and the
+   * original-event error code, saved at the last exit.  Bit 31 of
+   * idtvec set means the exit interrupted the delivery of that event
+   * through the guest's IDT; vmxinject() delivers it again on the next
+   * entry and then zeroes idtvec.
+   */
+  uint idtvec, idterr;     /* event being delivered when the guest exited */
+  /*
+   * The VM-exit instruction length of that exit.  For an exit during the
+   * delivery of a software interrupt or exception (INT n, INT3, INTO,
+   * INT1) it is the length of that instruction (SDM 30.2.5), which
+   * re-injection needs (see vmxinject()).
+   */
+  uint idtlen;             /* its instruction length (software events) */
+  /*
+   * The primary processor-based controls computed by vmcsinit().
+   * vmxinject() rewrites the VMCS field from this value on every entry,
+   * adding interrupt-window exiting only when it is needed, so that the
+   * control is off again once the interrupt has been injected.
+   */
+  uint cpuctl;             /* primary processor-based controls, from vmcsinit */
+  /*
+   * 256 bits, one per vector, like the interrupt request register (IRR)
+   * of a local APIC (SDM 13.8.4): bit v % 64 of pending[v / 64] says
+   * that vector v waits to be injected.  Requests for a vector that is
+   * already pending collapse into its one bit, as in the IRR.
+   */
+  uint64 pending[4];       /* external interrupts to inject: a bit per vector */
+  /*
+   * The host's tick count (ticks, trap.c) when vmrun() was called; the
+   * EXIT_EXTERNAL_INTR case of vmxhandle() compares it with ticks.
+   */
+  uint starttick;          /* host ticks when vmrun() was called */
 };
+
+/*
+ * HW2 functions, defined at the end of this file.  vmxcpuid() and
+ * vmxinject() are called from your vmxhandle() and vmrun().
+ */
+static char *gpa2kva(struct vm *vm, uint64 gpa);
+static int gva2gpa(struct vm *vm, uint64 gva, uint64 *gpa);
+static void vmxcpuid(struct vm *vm);
+static void vmxinject(struct vm *vm);
 
 /* The table of VMs, with one lock that protects the used/owner fields. */
 static struct {
@@ -594,4 +659,155 @@ vmxfreeproc(struct proc *p)
   for(id = 0; id < NVM; id++)
     if(vms.vm[id].used && vms.vm[id].owner == p)
       vmfree(&vms.vm[id]);
+}
+
+/* ---------------------------------------------------------------- */
+/* HW2                                                              */
+/* ---------------------------------------------------------------- */
+
+/*
+ * HW2. Translate a guest-physical address to the kernel address of the
+ * host memory behind it, through the EPT.  Returns 0 if the EPT does not
+ * map it.
+ */
+static char*
+gpa2kva(struct vm *vm, uint64 gpa)
+{
+  /* HW2 Part 2: paste Step 2 of HW2.md. */
+  return 0;
+}
+
+/*
+ * HW2. Translate a guest-virtual address to a guest-physical one, the way
+ * the guest's MMU would: walk the guest's own page tables, which live in
+ * guest-physical memory, starting at the guest's CR3 (saved at the last
+ * exit).  With paging off, the two addresses are the same.  Handles
+ * 4-level (IA-32e) paging with 4 KB, 2 MB and 1 GB pages (SDM Vol. 3A,
+ * 5.5).  Returns -1 if the address is not mapped.
+ */
+static int
+gva2gpa(struct vm *vm, uint64 gva, uint64 *gpa)
+{
+  uint64 table, e, size;
+  uint64 *p;
+  int level;
+
+  /* HW2 Part 2: write this function; see HW2.md. */
+  return -1;
+}
+
+/*
+ * HW2. Copy len bytes between buf (in the kernel's address space) and
+ * the guest's memory at addr: into the guest if flags has VMMEM_WRITE,
+ * out of it otherwise.  With VMMEM_VIRT, addr is guest-virtual and is
+ * translated page by page through the guest's page tables; otherwise it
+ * is guest-physical.  Returns len, or -1 if some page is not mapped.
+ * Called from the vmmem system call; runxv6 uses it to load the guest
+ * kernel, to build the MP tables, and to emulate string I/O.
+ */
+int
+vmmem(int id, uint64 addr, char *buf, int len, int flags)
+{
+  struct vm *vm;
+  uint64 gpa;
+  char *k;
+  int n, off;
+
+  /* HW2 Part 2: paste Steps 4 and 5 of HW2.md. */
+  return -1;
+}
+
+/*
+ * HW2. Ask for external interrupt `vector` (32-255) to be injected into
+ * the guest.  The interrupt stays pending until the guest can take it;
+ * vmrun() injects it on a later VM entry.  Returns 0, or -1 for a bad VM
+ * or vector.  Called from the vminject system call.
+ */
+int
+vminject(int id, int vector)
+{
+  struct vm *vm;
+
+  /*
+   * Vectors 0-31 are reserved by the architecture, for exceptions and
+   * the NMI (SDM 13.8.3); the guest's IDT handles them as such, so an
+   * external interrupt there would be taken for an exception.  Vectors
+   * have 8 bits, so 255 is the largest.
+   */
+  if((vm = getvm(id)) == 0 || vector < 32 || vector > 255)
+    return -1;
+  /*
+   * Only record the request: the guest is not running (the owner, the
+   * only caller, is in this system call, not in vmrun()), so no VMCS is
+   * current and nothing can be injected now.  vmxinject() picks it up
+   * on the next entry.  No lock is needed: only the owner's one thread
+   * reads or writes pending.
+   */
+  vm->pending[vector / 64] |= 1ULL << (vector % 64);
+  return 0;
+}
+
+/*
+ * The highest pending vector, or -1 if none.  A local APIC also delivers
+ * the highest-priority pending interrupt first, and an interrupt's
+ * priority is its vector: the higher the vector, the higher the priority
+ * (SDM 13.8.3, "Interrupt, Task, and Processor Priority").  We have no
+ * task priority or in-service register, so this is all of our priority.
+ */
+static int
+nextpending(struct vm *vm)
+{
+  int i, b;
+
+  /*
+   * Scan from the top: word 3 holds vectors 192-255, word 0 vectors
+   * 0-63.  Skip empty words, then look for the highest set bit.
+   */
+  for(i = 3; i >= 0; i--)
+    if(vm->pending[i])
+      for(b = 63; b >= 0; b--)
+        if(vm->pending[i] & (1ULL << b))
+          return 64*i + b;  /* bit b of word i is vector 64*i + b */
+  return -1;
+}
+
+/*
+ * HW2. Emulate CPUID, which always causes a VM exit (SDM 28.1.2).  Run
+ * the real instruction with the guest's EAX (leaf) and ECX (subleaf),
+ * hide VMX from the guest (this hypervisor does not support nested
+ * virtualization, so the guest's own vmxinit() prints "no VMX
+ * support"), and return the result in the guest's registers.  Writing a
+ * 32-bit register zero-extends into the 64-bit one, so the upper halves
+ * of RAX..RDX become 0, as on real hardware.
+ */
+static void
+vmxcpuid(struct vm *vm)
+{
+  /* HW2 Part 3: write this function; see HW2.md. */
+}
+
+/*
+ * HW2. Decide what to inject into the guest on this VM entry; the VMCS
+ * must be current.  Event injection works through the VM-entry
+ * interruption-information field: the CPU delivers the event through
+ * the guest's IDT as part of VM entry (SDM 29.6).
+ *
+ *  - If the last exit happened while the CPU was delivering an event to
+ *    the guest (IDT-vectoring information valid: an interrupt we
+ *    injected, a guest exception, an INT $64 system call), that event
+ *    was not delivered.  Inject it again, with its error code and, for a
+ *    software event, its instruction length (SDM 30.2.4, 29.6.1).
+ *  - Otherwise, if an external interrupt is pending and the guest can
+ *    take it now (RFLAGS.IF = 1 and no blocking by STI or MOV SS),
+ *    inject the highest pending vector.
+ *  - If one is pending but the guest cannot take it yet, turn on
+ *    interrupt-window exiting: the CPU exits (EXIT_INTR_WINDOW) as soon
+ *    as the guest can, and the next entry injects it.
+ */
+static void
+vmxinject(struct vm *vm)
+{
+  /* HW2 Part 4: write this function; see HW2.md. */
+  vmwrite(VM_ENTRY_INTR_INFO_FIELD, 0);
+  vmwrite(CPU_BASED_VM_EXEC_CONTROL, vm->cpuctl);
 }

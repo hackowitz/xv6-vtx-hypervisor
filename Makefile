@@ -165,7 +165,8 @@ _forktest: forktest.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o _forktest forktest.o ulib.o usys.o
 	$(OBJDUMP) -S _forktest > forktest.asm
 
-mkfs: mkfs.c fs.h
+# mkfs takes FSSIZE from param.h (HW2 changed it), so it depends on it.
+mkfs: mkfs.c fs.h param.h
 	gcc -Werror -Wall -o mkfs mkfs.c
 
 # Prevent deletion of intermediate files, e.g. cat.o, after first build, so
@@ -174,6 +175,8 @@ mkfs: mkfs.c fs.h
 # http://www.gnu.org/software/make/manual/html_node/Chained-Rules.html
 .PRECIOUS: %.o
 
+# HW2 added timertest (a test to run inside the guest) and runxv6 (the
+# monitor that runs xv6 as a guest).
 UPROGS=\
 	_cat\
 	_echo\
@@ -191,7 +194,9 @@ UPROGS=\
 	_usertests2\
 	_wc\
 	_zombie\
+	_timertest\
 	_runvm\
+	_runxv6\
 
 # Hello-world VT-x guest: a flat binary loaded by runvm, not an xv6
 # user program.
@@ -205,19 +210,88 @@ helloguest: helloguestasm.S helloguest.c helloguest.ld
 	$(OBJDUMP) -S helloguest.elf > helloguest.asm
 	$(OBJCOPY) -O binary helloguest.elf helloguest
 
-fs.img: mkfs README $(UPROGS) helloguest
-	./mkfs fs.img README $(UPROGS) helloguest
+# The xv6 guest (HW2): the same kernel, built a second time for a 32 MB
+# machine whose disk 1 holds a GUESTFSSIZE-block file system. runxv6
+# loads xv6kernel into a VM and serves xv6fs.img as the guest's disk.
+#
+# Size of the guest's disk in blocks. The guest kernel (ide.c) and
+# mkfsguest are both compiled with it. 2000 leaves room to run stressfs
+# and usertests2 in the guest; 1000 started almost full.
+GUESTFSSIZE = 2000
+# PHYSTOP 0x2000000 is 32 MB, the guest memory runxv6 asks vmcreate()
+# for (GUESTMEM in runxv6.c); the two must agree. memlayout.h and
+# param.h use these values instead of their defaults.
+GUESTDEFS = -DPHYSTOP=0x2000000 -DFSSIZE=$(GUESTFSSIZE)
+# The guest kernel's objects go in their own directory, guest/. They
+# come from the same sources as the host kernel's but are compiled with
+# other -D values, so they must not share file names: in one directory,
+# building one kernel would overwrite the other's bio.o and so on, and
+# make, which judges only by timestamps, would link a kernel from
+# objects built for the other one.
+GUESTOBJS = $(addprefix guest/,$(OBJS))
+# The guest's programs: the host's, minus the two VT-x monitors. The
+# guest has no VMX (vmxcpuid() hides it), so they could only fail.
+GUESTUPROGS = $(filter-out _runvm _runxv6,$(UPROGS))
+
+# The guest kernel's C files. "$(OBJS): CFLAGS += ..." above applies
+# only to the targets in OBJS (bio.o, ...), not to guest/bio.o, so the
+# kernel flags are repeated here. CFLAGS has -MD, so gcc also writes
+# guest/%.d, the headers each object depends on. make does not create
+# directories itself, hence mkdir -p (@ keeps make from echoing it).
+guest/%.o: %.c
+	@mkdir -p guest
+	$(CC) $(CFLAGS) -m64 -mcmodel=large -DX86_64 $(GUESTDEFS) -c -o $@ $<
+
+# The guest kernel's assembly files (entry.S includes memlayout.h and
+# param.h), with the same -D values as the C files.
+guest/%.o: %.S
+	@mkdir -p guest
+	$(CC) $(ASFLAGS) $(GUESTDEFS) -c -o $@ $<
+
+# Linked like kernel, with the same linker script, from the guest
+# objects. initcode and entryother come from the host build: they do
+# not use PHYSTOP or FSSIZE, so the same binaries serve both kernels.
+# runxv6 loads the ELF file itself, so no boot block or xv6.img-style
+# disk is needed.
+xv6kernel: $(GUESTOBJS) guest/entry.o entryother initcode kernel.ld
+	$(LD) $(LDFLAGS) -T kernel.ld -o xv6kernel guest/entry.o $(GUESTOBJS) -b binary initcode entryother
+
+# mkfs for the guest's disk. mkfs takes the image size from FSSIZE at
+# compile time, so the guest's needs its own binary, built with
+# GUESTFSSIZE. It depends on the Makefile because GUESTFSSIZE is set
+# here: changing it must rebuild mkfsguest.
+mkfsguest: mkfs.c fs.h param.h Makefile
+	gcc -Werror -Wall -DFSSIZE=$(GUESTFSSIZE) -o mkfsguest mkfs.c
+
+# The guest's disk image: GUESTFSSIZE blocks with the guest's programs.
+xv6fs.img: mkfsguest README $(GUESTUPROGS)
+	./mkfsguest xv6fs.img README $(GUESTUPROGS)
+
+# The host's disk. HW2 adds xv6kernel and xv6fs.img as ordinary files,
+# so that, inside xv6, "runxv6 xv6kernel xv6fs.img" can read them.
+# Both are larger than stock xv6's 70 KB file limit, hence the
+# doubly-indirect block in fs.h.
+fs.img: mkfs README $(UPROGS) helloguest xv6kernel xv6fs.img
+	./mkfs fs.img README $(UPROGS) helloguest xv6kernel xv6fs.img
+
+# Header dependencies of the guest objects (from -MD above), so that,
+# for example, changing param.h rebuilds them.
+-include guest/*.d
 
 -include *.d
 
+# HW2 added xv6kernel, xv6fs.img and mkfsguest, and the guest/
+# directory with the guest kernel's objects and dependency files.
 clean: 
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
 	*.o *.d *.asm *.sym vectors.S bootblock entryother \
 	initcode initcode.out kernel xv6.img fs.img kernelmemfs \
 	xv6memfs.img mkfs .gdbinit helloguest helloguest.elf \
+	xv6kernel xv6fs.img mkfsguest \
 	.bochsrc bochsout.txt serial.out \
 	$(UPROGS) \
 	.index.html
+	rm -rf guest
 
 # make a printout
 FILES = $(shell grep -v '^\#' runoff.list)

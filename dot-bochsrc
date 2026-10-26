@@ -297,9 +297,8 @@ ata3: enabled=0, ioaddr1=0x168, ioaddr2=0x360, irq=9
 #=======================================================================
 ata0-master: type=disk, mode=flat, path="xv6.img", cylinders=100, heads=10, spt=10
 # C*H*S*512 must equal the image size exactly; fs.img is FSSIZE (param.h)
-# blocks of BSIZE=512 bytes, i.e. 1000 sectors - not 1024, as this line
-# incorrectly assumed before.
-ata0-slave: type=disk, mode=flat, path="fs.img", cylinders=1000, heads=1, spt=1
+# blocks of BSIZE=512 bytes, i.e. 4000 sectors.
+ata0-slave: type=disk, mode=flat, path="fs.img", cylinders=4000, heads=1, spt=1
 #ata0-slave: type=cdrom, path=D:, status=inserted
 #ata0-slave: type=cdrom, path=/dev/cdrom, status=inserted
 #ata0-slave: type=cdrom, path="drive", status=inserted

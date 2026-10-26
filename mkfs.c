@@ -274,15 +274,37 @@ iappend(uint inum, void *xp, int n)
       }
       x = xint(din.addrs[fbn]);
     } else {
+      // Doubly indirect (HW2): addrs[NDIRECT] lists indirect blocks,
+      // which list data blocks. The same tree as bmap() in fs.c, which
+      // must be able to read what mkfs writes.
+      //
+      // dbn is the block number past the direct blocks; dbn / NINDIRECT
+      // selects the indirect block, dbn % NINDIRECT the entry in it.
+      uint dbn = fbn - NDIRECT;
+      uint ind;  // block number of that indirect block, host byte order
+      // mkfs allocates blocks in order from freeblock; main() marks
+      // everything below freeblock in use in the bitmap at the end.
       if(xint(din.addrs[NDIRECT]) == 0){
         din.addrs[NDIRECT] = xint(freeblock++);
       }
+      // Every sector was zeroed at the start, so a new pointer block
+      // reads back as all zeros: no entries yet. Comparing with 0
+      // needs no xint(), since 0 is 0 in either byte order.
       rsect(xint(din.addrs[NDIRECT]), (char*)indirect);
-      if(indirect[fbn - NDIRECT] == 0){
-        indirect[fbn - NDIRECT] = xint(freeblock++);
+      if(indirect[dbn / NINDIRECT] == 0){
+        indirect[dbn / NINDIRECT] = xint(freeblock++);
         wsect(xint(din.addrs[NDIRECT]), (char*)indirect);
       }
-      x = xint(indirect[fbn-NDIRECT]);
+      ind = xint(indirect[dbn / NINDIRECT]);
+      // Reuse the indirect[] buffer for the second level: the
+      // doubly-indirect block is on disk already and is read again for
+      // the next block of the file.
+      rsect(ind, (char*)indirect);
+      if(indirect[dbn % NINDIRECT] == 0){
+        indirect[dbn % NINDIRECT] = xint(freeblock++);
+        wsect(ind, (char*)indirect);
+      }
+      x = xint(indirect[dbn % NINDIRECT]);
     }
     n1 = min(n, (fbn + 1) * BSIZE - off);
     rsect(x, buf);

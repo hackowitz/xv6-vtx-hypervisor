@@ -1,7 +1,15 @@
 // Memory layout
 
 #define EXTMEM  0x100000            // Start of extended memory
+// HW2: xv6 assumes it has physical memory up to PHYSTOP (224 MB here)
+// and hands all of it to kalloc(). A guest has only what runxv6 gives
+// it (GUESTMEM, 32 MB), and the EPT maps nothing above that, so the
+// guest kernel is built with -DPHYSTOP=0x2000000 (Makefile GUESTDEFS);
+// otherwise its kinit would touch unmapped guest-physical memory and
+// cause an EPT violation. The #ifndef lets the -D value win.
+#ifndef PHYSTOP                     // the guest kernel is built smaller
 #define PHYSTOP 0xE000000           // Top physical memory
+#endif
 #define DEVSPACE 0xFE000000         // Other devices are at high addresses
 
 // Key addresses for address space layout (see kmap in vm.c for layout)

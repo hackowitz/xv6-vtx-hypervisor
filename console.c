@@ -190,6 +190,43 @@ struct {
   uint e;  // Edit index
 } input;
 
+// HW2: raw mode (consraw), for runxv6. Characters are not echoed or
+// edited, and read() returns each one as soon as it arrives.
+//
+// runxv6 passes every key to the guest's serial port, and the guest
+// xv6 runs its own console code on it: the guest echoes, handles
+// backspace and Ctrl-U, and buffers lines. If the host did that too,
+// every key would be echoed twice, and the guest would get keys only
+// after Enter. Unix terminals have the same mode (stty raw).
+static int rawmode;
+
+// Set by the consraw() system call (sysfile.c). Taking cons.lock
+// orders the change with consoleintr() and consoleread(), which test
+// rawmode while holding it.
+void
+consraw(int on)
+{
+  acquire(&cons.lock);
+  rawmode = on;
+  release(&cons.lock);
+}
+
+// HW2: would a read of the console return without blocking?
+// consoleread() sleeps while input.r == input.w, so a read returns at
+// once if and only if some committed input is waiting. Characters of a
+// line still being edited (between input.w and input.e) do not count.
+// Used by the fdready() system call.
+int
+consready(void)
+{
+  int r;
+
+  acquire(&cons.lock);
+  r = input.r != input.w;
+  release(&cons.lock);
+  return r;
+}
+
 #define C(x)  ((x)-'@')  // Control-x
 
 void
@@ -199,6 +236,28 @@ consoleintr(int (*getc)(void))
 
   acquire(&cons.lock);
   while((c = getc()) >= 0){
+    if(rawmode){
+      // HW2 raw mode: no echo, no editing; every character is
+      // available to read() at once.
+      //
+      // No consputc(): the guest echoes what it wants shown. Control
+      // characters are not interpreted: Ctrl-P, Ctrl-U, backspace and
+      // Ctrl-D reach the guest like any other byte. '\r' is not turned
+      // into '\n', as on a real serial line; the guest's own console
+      // code does that conversion.
+      //
+      // Keep the character only if the buffer has room; otherwise drop
+      // it, as line mode does.
+      if(input.e-input.r < INPUT_BUF){
+        input.buf[input.e++ % INPUT_BUF] = c;
+        // Commit it at once (line mode waits for the end of the line);
+        // this also commits any half-edited line from before raw mode.
+        input.w = input.e;
+        // Wake a reader sleeping in consoleread().
+        wakeup(&input.r);
+      }
+      continue;
+    }
     switch(c){
     case C('P'):  // Process listing.
       // procdump() locks cons.lock indirectly; invoke later
@@ -255,7 +314,8 @@ consoleread(struct inode *ip, char *dst, int n)
       sleep(&input.r, &cons.lock);
     }
     c = input.buf[input.r++ % INPUT_BUF];
-    if(c == C('D')){  // EOF
+    // In raw mode Ctrl-D is data for the guest, not end of file.
+    if(c == C('D') && !rawmode){  // EOF
       if(n < target){
         // Save ^D for next time, to make sure
         // caller gets a 0-byte result.
@@ -267,6 +327,14 @@ consoleread(struct inode *ip, char *dst, int n)
     --n;
     if(c == '\n')
       break;
+    // HW2: in raw mode, return as soon as the committed input runs out,
+    // even if fewer than n bytes were read. A raw-mode reader wants
+    // keys as they are typed, and a single key (with no '\n' to end
+    // the line) would otherwise leave read() asleep until n arrived.
+    // Since the loop only gets here after taking at least one byte, a
+    // raw read still blocks until there is something to return.
+    if(rawmode && input.r == input.w)
+      break;  // raw mode: return what has arrived, not a whole line
   }
   release(&cons.lock);
   ilock(ip);

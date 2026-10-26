@@ -21,9 +21,27 @@ struct superblock {
   uint bmapstart;    // Block number of first free map block
 };
 
+// Block addresses in an inode (HW2): NDIRECT direct blocks, then one
+// doubly-indirect block. That block lists NINDIRECT indirect blocks,
+// each of which lists NINDIRECT data blocks, so a file can hold a whole
+// guest kernel or disk image (up to about 8 MB). Stock xv6 had a
+// singly-indirect block in the same slot, which limited a file to
+// 12 + 128 blocks (70 KB). See figures/fs-layout.svg.
+//
+// NDIRECT stays 12, and addrs[NDIRECT] is still the only pointer to
+// more blocks, so struct dinode keeps its 13 addresses and its 64
+// bytes: 8 inodes still fit exactly in a 512-byte block (IPB below,
+// and mkfs asserts that BSIZE is a multiple of the inode size), and the
+// in-memory struct inode (file.h) is unchanged. The cost is that a file
+// just past 12 blocks needs two pointer blocks (the doubly-indirect one
+// and its first indirect one) instead of one.
 #define NDIRECT 12
+// Block addresses per indirect block: 512 / 4 = 128.
 #define NINDIRECT (BSIZE / sizeof(uint))
-#define MAXFILE (NDIRECT + NINDIRECT)
+// Data blocks reached through the doubly-indirect block: 128 * 128.
+#define NDINDIRECT (NINDIRECT * NINDIRECT)
+// Largest file in blocks: 12 + 16384 = 16396 blocks, 8,394,752 bytes.
+#define MAXFILE (NDIRECT + NDINDIRECT)
 
 // On-disk inode structure
 struct dinode {

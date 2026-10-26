@@ -364,8 +364,10 @@ iunlockput(struct inode *ip)
 //
 // The content (data) associated with each inode is stored
 // in blocks on the disk. The first NDIRECT block numbers
-// are listed in ip->addrs[].  The next NINDIRECT blocks are
-// listed in block ip->addrs[NDIRECT].
+// are listed in ip->addrs[].  The rest are reached through the
+// doubly-indirect block ip->addrs[NDIRECT]: it lists NINDIRECT
+// indirect blocks, and each of those lists NINDIRECT data blocks
+// (HW2; stock xv6 had a singly-indirect block there).
 
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
@@ -382,14 +384,47 @@ bmap(struct inode *ip, uint bn)
   }
   bn -= NDIRECT;
 
-  if(bn < NINDIRECT){
-    // Load indirect block, allocating if necessary.
+  // From here on bn counts blocks past the direct ones, 0 to
+  // NDINDIRECT-1. Write it as bn = i * NINDIRECT + j: i = bn / NINDIRECT
+  // picks the indirect block (the entry in the doubly-indirect block),
+  // and j = bn % NINDIRECT picks the data block within it. So blocks
+  // 12-139 of the file go through indirect block 0, blocks 140-267
+  // through indirect block 1, and so on.
+  if(bn < NDINDIRECT){
+    // Load the doubly-indirect block, allocating if necessary, then the
+    // indirect block it lists for this bn, then the data block.
+    // A new doubly-indirect block only changes the in-memory inode; the
+    // caller (writei) writes the inode to disk with iupdate().
+    //
+    // A write here can log one more pointer block than in stock xv6
+    // (two at a 128-block boundary). It still fits: filewrite() writes
+    // at most 1536 bytes per transaction, so at worst 4 data blocks,
+    // the inode, the bitmap, this block and 2 indirect blocks, 9 of the
+    // MAXOPBLOCKS (10) a transaction may write.
     if((addr = ip->addrs[NDIRECT]) == 0)
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
+    // balloc() zeroes new blocks, so a new pointer block lists nothing.
     bp = bread(ip->dev, addr);
     a = (uint*)bp->data;
-    if((addr = a[bn]) == 0){
-      a[bn] = addr = balloc(ip->dev);
+    if((addr = a[bn / NINDIRECT]) == 0){
+      a[bn / NINDIRECT] = addr = balloc(ip->dev);
+      // The new pointer is only in the buffer cache. log_write() makes
+      // it part of the current transaction: it is written to disk at
+      // commit, together with the bitmap change in balloc(), and the
+      // buffer stays cached until then. Without it, the pointer would
+      // be lost once the buffer was reused, and the block would stay
+      // allocated but unreachable.
+      log_write(bp);
+    }
+    // Release the doubly-indirect block before reading the next level:
+    // nothing more is needed from it, and holding two buffers at once
+    // would only use up more of the small buffer cache.
+    brelse(bp);
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[bn % NINDIRECT]) == 0){
+      a[bn % NINDIRECT] = addr = balloc(ip->dev);
+      // Same reason as above, for the pointer to the data block.
       log_write(bp);
     }
     brelse(bp);
@@ -407,9 +442,9 @@ bmap(struct inode *ip, uint bn)
 static void
 itrunc(struct inode *ip)
 {
-  int i, j;
-  struct buf *bp;
-  uint *a;
+  int i, j, k;
+  struct buf *bp, *bp2;
+  uint *a, *a2;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -418,13 +453,37 @@ itrunc(struct inode *ip)
     }
   }
 
+  // HW2: the doubly-indirect tree. Free it bottom up: the data blocks,
+  // then the indirect block that listed them, and the doubly-indirect
+  // block last. A pointer block is the only record of its children, so
+  // it must stay allocated while it is being read: once freed, another
+  // process's balloc() could take it and zero it before we got to its
+  // entries, and those blocks would never be freed. A zero entry means
+  // no block was allocated there; skip it.
+  //
+  // bfree() changes only the bitmap, and log_write() logs a block once
+  // per transaction however often it changes, so truncating even an
+  // 8 MB file logs just the bitmap and the inode: one transaction.
   if(ip->addrs[NDIRECT]){
+    // Free each indirect block's data blocks, then the indirect block.
     bp = bread(ip->dev, ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
     for(j = 0; j < NINDIRECT; j++){
-      if(a[j])
+      if(a[j]){
+        // Indirect block j: read it, free the data blocks it lists,
+        // and release its buffer before freeing the block itself.
+        bp2 = bread(ip->dev, a[j]);
+        a2 = (uint*)bp2->data;
+        for(k = 0; k < NINDIRECT; k++)
+          if(a2[k])
+            bfree(ip->dev, a2[k]);
+        brelse(bp2);
         bfree(ip->dev, a[j]);
+      }
     }
+    // Last, the doubly-indirect block. The pointer blocks themselves are
+    // not cleared: once freed they are unreachable, and balloc() zeroes
+    // a block when it hands it out again.
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;

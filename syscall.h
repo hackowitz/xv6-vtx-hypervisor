@@ -24,3 +24,7 @@
 #define SYS_vmsetreg 23
 #define SYS_vmrun    24
 #define SYS_vmgetreg 25
+#define SYS_vmmem    26
+#define SYS_vminject 27
+#define SYS_fdready  28
+#define SYS_consraw  29

@@ -59,8 +59,11 @@ enum {
  */
 
 /*
- * An exception or NMI. A guest exception arrives here because the
- * exception bitmap is all ones; the vector is in vmexit.intrinfo.
+ * An exception or NMI. In HW1 a guest exception arrived here because
+ * the exception bitmap was all ones; the vector is in vmexit.intrinfo.
+ * Since HW2 the bitmap is 0 and the guest handles its own exceptions,
+ * so only a host NMI exits with this reason, and the kernel resumes the
+ * guest after it.
  */
 #define EXIT_EXCEPTION_NMI      0
 
@@ -70,7 +73,23 @@ enum {
 /* The guest triple-faulted (a fault while handling a double fault). */
 #define EXIT_TRIPLE_FAULT       2
 
-/* The guest executed CPUID. Always causes an exit; not handled yet. */
+/*
+ * Interrupt window (HW2): the guest can now take the interrupt that
+ * the hypervisor is waiting to inject. Handled in the kernel.
+ *
+ * It happens only while vmxinject() has turned on interrupt-window
+ * exiting (CPU_INTR_WINDOW_EXITING in vmx.h): RFLAGS.IF is 1 and no
+ * STI or MOV SS blocking is in effect (SDM Appendix C, Table C-1).
+ * vmxhandle() just resumes the guest, and the next VM entry injects
+ * the interrupt, so user space never sees this exit.
+ */
+#define EXIT_INTR_WINDOW        7
+
+/*
+ * The guest executed CPUID. Always causes an exit (SDM 28.1.2). Since
+ * HW2 the kernel emulates it (vmxcpuid() in vmx.c, which hides VMX
+ * from the guest), so user space does not see it either.
+ */
 #define EXIT_CPUID              10
 
 /* The guest executed HLT. runvm treats it as the guest finishing. */
@@ -136,5 +155,53 @@ struct vmexit {
     uchar size;      /* 1, 2 or 4 bytes */
     uchar in;        /* 1 for IN, 0 for OUT */
     uint data;       /* OUT: value written (unused for IN) */
+    /*
+     * String I/O (INS/OUTS, HW2): the kernel decodes, runxv6 emulates.
+     *
+     * xv6's IDE driver moves each sector with REP INSL and REP OUTSL.
+     * The data is in guest memory, not in RAX, so io.data is unused;
+     * the kernel reports where the data is, and runxv6 copies it with
+     * vmmem(VMMEM_VIRT). The kernel still advances RIP past the whole
+     * instruction, so runxv6 must do every iteration at once and leave
+     * RCX, RDI (INS) or RSI (OUTS) as the CPU would have: RCX 0, and
+     * RDI or RSI moved by count * size (forward: xv6 never sets
+     * RFLAGS.DF).
+     */
+    uchar string;    /* 1 for INS/OUTS (exit qualification bit 4) */
+    uchar rep;       /* 1 if it has a REP prefix (qualification bit 5) */
+    uint64 count;    /* units to transfer: RCX with REP, else 1 */
+    /*
+     * The VMCS guest-linear address (GUEST_LINEAR_ADDRESS in vmx.h):
+     * RDI for INS, RSI for OUTS, since 64-bit mode ignores the segment
+     * bases. It goes through the guest's page tables, not the EPT.
+     */
+    uint64 addr;     /* guest-virtual address of the memory operand */
   } io;
 };
+
+/*
+ * Flags for vmmem() (HW2). Without VMMEM_VIRT, addr is guest-physical
+ * and is translated only through the EPT. With it, addr is first
+ * translated as the guest's own MMU would, through the guest's page
+ * tables, using its CR0, CR3 and EFER as of the last exit; this is
+ * what string I/O needs, since the guest's buffer is a kernel virtual
+ * address. The flags can be combined (VMMEM_VIRT | VMMEM_WRITE).
+ */
+#define VMMEM_WRITE   1  /* copy from the user buffer into the guest */
+/* addr is guest-virtual: walk the guest's page tables */
+#define VMMEM_VIRT    2
+
+/*
+ * Guest-physical addresses of the local APIC and the I/O APIC. vmcreate()
+ * backs each with a zeroed page (HW2): enough for xv6 to boot, though not
+ * a real emulation of either device.
+ *
+ * These are the standard PC addresses. xv6 finds the local APIC at the
+ * address the MP table gives (runxv6 writes VM_LAPIC_ADDR there) and
+ * uses 0xFEC00000 for the I/O APIC (IOAPIC in ioapic.c). With plain
+ * memory behind them, xv6's register writes are kept and read back,
+ * reads of untouched registers return 0, and no interrupt ever comes
+ * through them: runxv6 injects every interrupt with vminject().
+ */
+#define VM_LAPIC_ADDR  0xFEE00000
+#define VM_IOAPIC_ADDR 0xFEC00000

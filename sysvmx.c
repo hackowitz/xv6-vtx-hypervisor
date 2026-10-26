@@ -145,3 +145,53 @@ sys_vmrun(void)
     return -1;
   return vmrun(vm, (struct vmexit*)exit);
 }
+
+// int vmmem(int vm, uint64 addr, void *buf, int len, int flags)
+//
+// HW2. Copy len bytes between buf and the guest's memory at addr: into
+// the guest with VMMEM_WRITE, out of it otherwise. addr is guest-physical,
+// or guest-virtual with VMMEM_VIRT (vmxapi.h). Returns len, or -1 if the
+// VM or an address is bad. argptr() checks that the whole user buffer
+// is inside the process, in either direction.
+//
+// runxv6 uses it to load the guest kernel, to write the BIOS data area
+// and the MP tables, and to emulate INS and OUTS for the IDE disk.
+// vmmem() copies straight to or from the user's buf: during a system
+// call the process's page table is still loaded, so the kernel can use
+// a checked user address directly.
+uint64
+sys_vmmem(void)
+{
+  int vm, len, flags;
+  int64 addr;
+  char *buf;
+
+  // addr is a 64-bit guest address, so it needs argint64(); argint()
+  // would truncate it. len is fetched before buf because argptr()
+  // needs it to check the buffer's extent; || evaluates left to right.
+  // argptr() also rejects a negative len.
+  if(argint(0, &vm) < 0 || argint64(1, &addr) < 0 || argint(3, &len) < 0 ||
+     argptr(2, &buf, len) < 0 || argint(4, &flags) < 0)
+    return -1;
+  return vmmem(vm, addr, buf, len, flags);
+}
+
+// int vminject(int vm, int vector)
+//
+// HW2. Make external interrupt `vector` (32-255) pending for the guest;
+// a later vmrun() injects it when the guest can take it.
+//
+// This is how runxv6's emulated devices interrupt the guest: the
+// timer (vector 32), COM1 (36) and the IDE disk (46). Vectors 0-31 are
+// reserved for exceptions, so vminject() rejects them.
+// Making a vector pending twice before it is injected delivers it
+// once, as with a real interrupt controller.
+uint64
+sys_vminject(void)
+{
+  int vm, vector;
+
+  if(argint(0, &vm) < 0 || argint(1, &vector) < 0)
+    return -1;
+  return vminject(vm, vector);
+}

@@ -119,3 +119,22 @@ piperead(struct pipe *p, char *addr, int n)
   release(&p->lock);
   return i;
 }
+
+// HW2: would a read of p return without blocking? It does if there is
+// data, or if the write end is closed (the read returns 0).
+// This is the negation of the condition piperead() sleeps on. Used by
+// the fdready() system call.
+int
+pipeready(struct pipe *p)
+{
+  int r;
+
+  // Take the lock so that nread, nwrite and writeopen are read as one
+  // consistent snapshot, not halfway through a pipewrite().
+  acquire(&p->lock);
+  // nread and nwrite count bytes ever read and written; they differ
+  // exactly when the pipe holds unread data.
+  r = p->nread != p->nwrite || !p->writeopen;
+  release(&p->lock);
+  return r;
+}

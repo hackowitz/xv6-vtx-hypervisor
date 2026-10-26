@@ -177,6 +177,20 @@
 
 /* HLT exits. runvm uses HLT as the guest's "I am done" signal. */
 #define CPU_HLT_EXITING               (1 << 7)
+/*
+ * Interrupt-window exiting (HW2): exit as soon as the guest can take an
+ * external interrupt (RFLAGS.IF = 1 and no STI/MOV SS blocking). Set it
+ * while an interrupt is waiting to be injected (SDM 27.6.2, 28.2).
+ *
+ * Bit 2 of the primary processor-based controls (SDM Table 27-6). The
+ * exit comes before the guest executes any instruction in an open
+ * window, so if the window is already open at VM entry the guest exits
+ * at once (SDM 29.7.5); the exit reason is 7, "interrupt window" (SDM
+ * Appendix C, Table C-1; EXIT_INTR_WINDOW in vmxapi.h). vmxinject()
+ * turns it on only while an interrupt waits, since otherwise the guest
+ * would exit before every instruction it runs with interrupts enabled.
+ */
+#define CPU_INTR_WINDOW_EXITING       (1 << 2)
 
 /* INVLPG exits (not used by vmx.c). */
 #define CPU_INVLPG_EXITING            (1 << 9)
@@ -472,6 +486,28 @@
  * 0 means inject nothing.
  */
 #define VM_ENTRY_INTR_INFO_FIELD      0x4016
+/*
+ * Error code and instruction length that go with an injected event
+ * (HW2). The newest SDM calls these fields the "injected-event error
+ * code" and the "VM-entry instruction length" (SDM 27.8.3, 29.6).
+ * Encodings: SDM Appendix B.3.1, Table B-8, which notes the error code
+ * field's old name, "VM-entry error code".
+ *
+ * The error code is pushed on the guest's stack, as a real exception
+ * would push it, only if bit 11 (deliver error code) is set in
+ * VM_ENTRY_INTR_INFO_FIELD; its bits 31:16 must then be 0 (SDM
+ * 29.2.1.3, 29.6.1.1).
+ *
+ * The instruction length is used only for software events (types 4, 5
+ * and 6 below): the guest RIP pushed for them is the RIP from the
+ * guest-state area plus this length, the address after the INT n, just
+ * as when the guest executes it (SDM 29.6.1.1). It must be 0-15 (SDM
+ * 29.2.1.3). Re-injected events take it from VM_EXIT_INSTRUCTION_LEN,
+ * which a VM exit during delivery of a software event sets to the
+ * length of the instruction that raised it (SDM 30.2.5).
+ */
+#define VM_ENTRY_EXCEPTION_ERROR_CODE 0x4018
+#define VM_ENTRY_INSTRUCTION_LEN      0x401A
 
 /* Secondary processor-based controls (CPU2_* bits above). */
 #define SECONDARY_VM_EXEC_CONTROL     0x401E
@@ -499,6 +535,29 @@
 
 /* Error code of the exception, if INTR_INFO_ERROR_VALID is set. */
 #define VM_EXIT_INTR_ERROR_CODE       0x4406
+/*
+ * IDT-vectoring information (HW2): if the exit happened while the CPU
+ * was delivering an event to the guest (an injected interrupt, an
+ * exception, an INT n), this field describes that event, and the
+ * hypervisor must inject it again or it is lost. The newest SDM calls it
+ * the "original-event identification" (SDM 27.9.3, 30.2.4).
+ *
+ * Encodings: SDM Appendix B.3.2, Table B-9 ("original-event
+ * identification" and "original-event error code"). The format is that
+ * of the injection field (SDM Table 27-21 against Table 27-18): vector
+ * in bits 7:0, type in 10:8, error code valid in bit 11, valid in bit
+ * 31. So it can be written back to VM_ENTRY_INTR_INFO_FIELD almost as
+ * is, but bit 12 is undefined here (SDM 30.2.4) and must be 0 for
+ * injection (SDM 29.2.1.3), so vmxinject() clears it.
+ *
+ * Example: delivering an interrupt pushes onto the guest's stack, and
+ * that write causes an EPT violation; the guest never saw the
+ * interrupt. An event injected by VM entry is reported here too if its
+ * delivery causes an exit (SDM 29.6.1.2). The error code field is
+ * valid only if bit 11 is set (SDM 30.2.4).
+ */
+#define IDT_VECTORING_INFO            0x4408
+#define IDT_VECTORING_ERROR_CODE      0x440A
 
 /*
  * Length in bytes of the instruction that caused the exit. After
@@ -568,6 +627,20 @@
  * of access that failed (read/write/fetch).
  */
 #define EXIT_QUALIFICATION            0x6400
+/*
+ * Guest-linear address (HW2): for INS/OUTS exits, the guest-virtual
+ * address of the memory operand (SDM 27.9.1, 30.2.1).
+ *
+ * Encoding: SDM Appendix B.4.2, Table B-13. For INS it is the ES base
+ * plus (E)DI, for OUTS the DS base (or an override segment's) plus
+ * (E)SI, so the hypervisor need not compute it from the segment
+ * registers (SDM 30.2.1). In 64-bit mode those segment bases are 0, so
+ * it is just RDI or RSI, a virtual address that the guest's page
+ * tables translate; it is not guest-physical, and vmmem() translates
+ * it with VMMEM_VIRT. Bit 5 of the I/O exit qualification says whether
+ * the instruction has a REP prefix (SDM Table 30-5).
+ */
+#define GUEST_LINEAR_ADDRESS          0x640A
 
 /* ---- Natural-width guest-state fields (B.4.3) ---- */
 
@@ -692,6 +765,42 @@
 #define INTR_INFO_TYPE(x)         (((x) >> 8) & 0x7)
 #define INTR_INFO_ERROR_VALID     (1 << 11)
 #define INTR_TYPE_NMI             2
+/*
+ * More event types, for injecting events (HW2; SDM 27.8.3).
+ *
+ * The same layout serves VM_ENTRY_INTR_INFO_FIELD (SDM Table 27-18) and
+ * IDT_VECTORING_INFO (SDM Table 27-21). Bit 31 is "valid": VM entry
+ * injects an event only if it is set, and every VM exit clears it in
+ * the entry field (SDM 27.8.3).
+ */
+#define INTR_INFO_VALID           (1U << 31)
+/* An interrupt from a device: what vminject() injects (bits 10:8 = 0). */
+#define INTR_TYPE_EXT_INTR        0
+/* An exception raised by the CPU, such as #PF or #GP. */
+#define INTR_TYPE_HW_EXCEPTION    3
+/* INT n, such as xv6's system-call trap. */
+#define INTR_TYPE_SOFT_INTR       4
+/* INT1 (opcode F1). */
+#define INTR_TYPE_PRIV_SW_EXC     5
+/* INT3 or INTO. */
+#define INTR_TYPE_SOFT_EXC        6
+/*
+ * Types 4-6 are raised by an instruction, so injecting one needs
+ * VM_ENTRY_INSTRUCTION_LEN; types 0 and 3 do not (SDM 29.6.1.1). Type 1
+ * is reserved and 7 is "other event" (SDM Table 27-18); neither is used.
+ */
+/*
+ * Guest interruptibility state: blocking by STI and by MOV SS.
+ *
+ * Bits of GUEST_INTERRUPTIBILITY_INFO (SDM 27.4.2, Table 27-3). STI
+ * with RFLAGS.IF = 0, and MOV SS or POP SS, block interrupts until the
+ * next instruction boundary, even though RFLAGS.IF may be 1. VM entry
+ * fails if it injects an external interrupt while either bit is set
+ * (SDM 29.3.1.5) or while RFLAGS.IF is 0 (SDM 29.3.1.4), so
+ * vmxinject() tests all three before injecting.
+ */
+#define INTERRUPTIBILITY_STI      (1 << 0)
+#define INTERRUPTIBILITY_MOVSS    (1 << 1)
 
 /*
  * Bit 31 of VM_EXIT_REASON: the "exit" is a failed VM entry (invalid

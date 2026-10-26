@@ -141,6 +141,10 @@ extern uint64 sys_vmcreate(void);
 extern uint64 sys_vmsetreg(void);
 extern uint64 sys_vmrun(void);
 extern uint64 sys_vmgetreg(void);
+extern uint64 sys_vmmem(void);
+extern uint64 sys_vminject(void);
+extern uint64 sys_fdready(void);
+extern uint64 sys_consraw(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -168,6 +172,10 @@ static uint64 (*syscalls[])(void) = {
 [SYS_vmsetreg] sys_vmsetreg,
 [SYS_vmrun]   sys_vmrun,
 [SYS_vmgetreg] sys_vmgetreg,
+[SYS_vmmem]   sys_vmmem,
+[SYS_vminject] sys_vminject,
+[SYS_fdready] sys_fdready,
+[SYS_consraw] sys_consraw,
 };
 
 void

@@ -442,3 +442,61 @@ sys_pipe(void)
   fd[1] = fd1;
   return 0;
 }
+
+// int fdready(int fd)
+//
+// HW2. Returns 1 if a read() of fd would not block, 0 if it would, or
+// -1 for a bad fd. runxv6 uses it to poll the console between runs of
+// the guest, since xv6 has no non-blocking I/O.
+//
+// runxv6 is one process with one thread, and it must keep calling
+// vmrun() to run the guest. xv6 has no O_NONBLOCK, select() or poll(),
+// and read() of the console sleeps until input arrives, so a plain
+// read() would stop the guest until the next key. With fdready(),
+// runxv6 reads only when a read cannot block. The answer stays true
+// until the caller reads: input only accumulates, as long as no other
+// process reads the same file.
+uint64
+sys_fdready(void)
+{
+  struct file *f;
+
+  // argfd() checks that fd is open in this process.
+  if(argfd(0, 0, &f) < 0)
+    return -1;
+  // A pipe blocks while it is empty and its write end is open.
+  if(f->type == FD_PIPE)
+    return pipeready(f->pipe);
+  // The console blocks until input is committed. Only the console
+  // device can block; other devices would need their own test.
+  if(f->type == FD_INODE && f->ip->type == T_DEV && f->ip->major == CONSOLE)
+    return consready();
+  // A regular file or directory never waits for input: readi() returns
+  // at once (it may wait for the disk, but that always finishes).
+  // f->readable is not checked: on an fd not open for reading, read()
+  // fails at once whatever fdready() says.
+  return 1;
+}
+
+// int consraw(int on)
+//
+// HW2. Turn the console's raw mode on or off. In raw mode, typed
+// characters are not echoed or edited, and read() returns them as soon
+// as they arrive instead of a line at a time. runxv6 turns it on so that
+// every key goes straight to the guest, which does its own echoing.
+//
+// The mode belongs to the console, not to the process: it stays on
+// until someone turns it off, so runxv6 turns it off before it exits
+// (die() and the Ctrl-] quit), or the shell would get raw input. If
+// runxv6 is killed, the console stays raw.
+uint64
+sys_consraw(void)
+{
+  int on;
+
+  if(argint(0, &on) < 0)
+    return -1;
+  // Any nonzero value turns raw mode on.
+  consraw(on);
+  return 0;
+}
