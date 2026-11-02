@@ -4,9 +4,10 @@ Fill in this file and hand it in with your code. Replace each
 `(your answer)` with two or three sentences. Keep the question numbers
 (part.question), and do not delete the questions.
 
-- **Name:**
-- **Machine and environment you tested on** (CADE lab machine with QEMU, or Bochs):
-- **How far did you get?** (for example "all six parts work", or "stuck in part 4, block B"):
+- **Name:** Noah Jackowitz
+- **Machine and environment you tested on:** x86 Kubuntu Linux PC with QEMU on KVM
+- **How far did you get?** All six parts work, and I added a wait for transmitter empty in
+  `helloguest` to get some practical usage from `EXIT_IO` _in_ from the status line register.
 
 
 ## Part 1: Entering VMX operation
@@ -16,7 +17,8 @@ Fill in this file and hand it in with your code. Replace each
 > In Step 1, why does the function `return` when VMX is missing instead
 > of calling `panic()`?
 
-**Answer:** (your answer)
+**Answer:** We don't want to crash the OS when VMX is unavailable! Much better is to print a useful
+warning and continue without the feature.
 
 ### Question 1.2
 
@@ -24,21 +26,25 @@ Fill in this file and hand it in with your code. Replace each
 > locked VMX. Why does the code still handle the unlocked case instead
 > of just failing?
 
-**Answer:** (your answer)
+**Answer:** It's a one-way switch; we can't unlock it if it's already locked, but we can lock it if
+it's unlocked.
 
 ### Question 1.3
 
 > In Step 3, what would happen if we skipped `lcr4(cr4)` and went
 > straight to `VMXON`?
 
-**Answer:** (your answer)
+**Answer:** From the book, "VMSON fails if any of these bits contain an unsupported value".
 
 ### Question 1.4
 
 > In Step 4, why does each CPU need its own VMXON region? What could go
 > wrong if all CPUs shared one?
 
-**Answer:** (your answer)
+**Answer:** From the book, software should use a separate VMXON region for each logical processor.
+Doing otherwise may lead to unpredictable behavior such as VM entry failure, nondeterministic
+behavior, incorrect support for VMX non-root operation, undesired processor state, or processor
+shutdown.
 
 ## Part 2: Creating a VM, its memory, and the EPT
 
@@ -49,7 +55,9 @@ Fill in this file and hand it in with your code. Replace each
 > would go wrong if the hypervisor gave the guest direct access to the
 > host's physical memory instead?
 
-**Answer:** (your answer)
+**Answer:** The EPT translates guest "physical" addresses to host physical addresses. The host OS
+controls it, since it provides access to physical memory. If the hypervisor gave the guest control
+of physical memory, the guest could take control of the host by changing its memory.
 
 ### Question 2.2
 
@@ -57,7 +65,10 @@ Fill in this file and hand it in with your code. Replace each
 > zero every new table. These are two different reasons to zero. State
 > each, and say what the guest or the CPU would see if we skipped it.
 
-**Answer:** (your answer)
+**Answer:** We zero the page tables since otherwise there could be an inadvertent mapping that
+gives the guest unintented memory access. We zero the memory pages because otherwise the guest
+could access whatever memory had been freed, including sensitive data from the host or other
+programs.
 
 ### Question 2.3
 
@@ -65,7 +76,8 @@ Fill in this file and hand it in with your code. Replace each
 > `eptwalk()`, instead of one `memmove` of `len` bytes to the guest's
 > first page?
 
-**Answer:** (your answer)
+**Answer:** The guest "physical" pages may not actually be continuous in physical memory, so we
+must take care to write the image to _guest_ physical memory via the EPT mapping.
 
 ### Question 2.4
 
@@ -75,7 +87,10 @@ Fill in this file and hand it in with your code. Replace each
 > treats as valid (hint: see Appendix A.10 for execute-only support), and
 > say why our code never creates such an entry.
 
-**Answer:** (your answer)
+**Answer:** As mentioned in the question itself and in Appendix A.10, the processor supports
+execute-only translations. Our code doesn't create this type of entry because we always set
+`EPT_RWX` so the guest can fully control it's own physical memory - just as any OS would
+expect if it were running unvirtualized.
 
 ## Part 3: The VMCS, describing the guest and the host
 
@@ -86,7 +101,11 @@ Fill in this file and hand it in with your code. Replace each
 > `want` has a bit that `high` has cleared, and why is returning an error
 > better than silently dropping the bit?
 
-**Answer:** (your answer)
+**Answer:** `... | low` lets `low` set bits as required, and `& high` lets `high` unset bits as
+required. If the CPU doens't support a capability we "want" (need), we will inevitably fail, and
+should do so now we've cound out, rather than act surprised later when the hardware can't do what
+we knew the whole time it couldn't. Vice versa, if the CPU requires a control we don't use, an
+error isn't guaranteed and we can carry on unbothered.
 
 ### Question 3.2
 
@@ -95,7 +114,9 @@ Fill in this file and hand it in with your code. Replace each
 > is 0? Why is the all-ones setting more useful to someone debugging a
 > guest?
 
-**Answer:** (your answer)
+**Answer:** If the host lets the guest handle interrupts - and the guest does nothing, the interrupt
+is fatal to the guest and there is no trace. Since we know our guest does no error handling, we
+capture the errors ourselves.
 
 ### Question 3.3
 
@@ -103,7 +124,8 @@ Fill in this file and hand it in with your code. Replace each
 > about what the CPU does with a guest linear address when `CR0.PG = 0`
 > (SDM 28.6).
 
-**Answer:** (your answer)
+**Answer:** If the "unrestricted" guest can run without paging "guest physical" memory, a mapping of
+guest physical to host physical is the only protection against the guest controlling host memory.
 
 ### Question 3.4
 
@@ -111,7 +133,12 @@ Fill in this file and hand it in with your code. Replace each
 > Which two VMCS fields make that work? What happens if the guest tries to
 > set `CR4.VMXE` to 1, and why do we not let it?
 
-**Answer:** (your answer)
+**Answer:** The bit indicates that the guest is being virtualized, which is itself sensitive
+information. `CR4_GUEST_HOST_MASK` controls which bits the guest may write and which bits trigger a
+VM exit for the host to virtualize. `CR4_READ_SHADOW` holds the virtual value for the masked bits,
+to present to theguest instead of the true, sensitive, values. Since we do not want to support
+nested virtualization, the guest should not think it is in a machine that supports VMX, and so
+`VMXE` should always appear unset.
 
 ## Part 4: Entering and leaving the guest
 
@@ -122,7 +149,10 @@ Fill in this file and hand it in with your code. Replace each
 > CPU keep it instead, and what would go wrong if `vmx_exit` tried to
 > store `%rsp` into `*regs` like the others?
 
-**Answer:** (your answer)
+**Answer:** The VMCS region holds the guest stack pointer. This is important since `vmx_exit` lives
+in the host, and `%rsp` must point to it's own stack. Otherwise, `vmx_exit` would not know where to
+find any of the host values. If `vmx_exit` accidentally stored it's own `%rsp` as a guest register,
+the guest stack would be corrupted with the host's value and could cause undefined behavior.
 
 ### Question 4.2
 
@@ -131,7 +161,8 @@ Fill in this file and hand it in with your code. Replace each
 > not? Describe a concrete situation in which the `HOST_RSP` written by
 > a previous entry would be wrong.
 
-**Answer:** (your answer)
+**Answer:** The instruction pointer is the same because `vmx_exit`'s address does not change. The
+stack pointer, however, depends on the entire call stack, which can and does change between calls.
 
 ### Question 4.3
 
@@ -140,7 +171,9 @@ Fill in this file and hand it in with your code. Replace each
 > `vmrun()` execute it? What would the VM-instruction error be if the
 > code passed `launched = 1` on the first entry?
 
-**Answer:** (your answer)
+**Answer:** `vmclear(V2P(vm->vmcs));` wraps the assembly `vmclear` fucntion and clears the launch
+state _before_ host interrupts are re-enabled. If VMRESUME were used instead of VMLAUNCH (when
+`launched = 1`) on an inactive/not current VM, the instruction would error.
 
 ### Question 4.4
 
@@ -149,7 +182,9 @@ Fill in this file and hand it in with your code. Replace each
 > say what is different (CPU, process, or both) for each. What would
 > happen at the next VM exit if the field kept the old value?
 
-**Answer:** (your answer)
+**Answer:** The GDTR and IDTR can be different on different CPUs, and a different process may have
+a different CR3. If the old value was kept, the host could resume in an invalid state, and have
+undefined behavior.
 
 ## Part 5: Running the guest, the vmrun loop and exit handling
 
@@ -159,7 +194,15 @@ Fill in this file and hand it in with your code. Replace each
 > concrete sequence of events, with two CPUs, in which the opposite
 > order corrupts the VMCS. Which sentence of SDM 27.11.1 do you rely on?
 
-**Answer:** (your answer)
+**Answer:** If `popcli()` occurs first and a pending interrupt causes the kernel to resume
+execution on the other CPU, the VMCS may be active on both processors and become corrupted. Rather,
+`vmclear` should be used to deactivate the VMCS and write it to memory first, before allowing an
+interrupt that could switch CPUs or processes. Per the SDM:
+
+> If a VMCS is to be “migrated” from one logical processor to another, the first logical processor
+> should execute VMCLEAR for the VMCS (to make it inactive on that logical processor and to ensure
+> that all VMCS data are in memory) before the other logical processor executes VMPTRLD for the
+> VMCS (to make it active on the second logical processor).
 
 ### Question 5.2
 
@@ -168,7 +211,9 @@ Fill in this file and hand it in with your code. Replace each
 > the VMCS loaded between exits and used `VMRESUME` instead? What would
 > we give up?
 
-**Answer:** (your answer)
+**Answer:** We would skip running `vmclear` so the VMCS is still active on the current CPU. We
+would not be able to resume on a different CPU, since the VMCS is never cleared, but this could
+save some overhead.
 
 ### Question 5.3
 
@@ -177,7 +222,9 @@ Fill in this file and hand it in with your code. Replace each
 > Where and when exactly does the host handle it? What would change if
 > the exit control "acknowledge interrupt on exit" were set?
 
-**Answer:** (your answer)
+**Answer:** The kernel does nothing itself in `vmxhandle`, but returns to the user program which
+may handle the interrupt. If "acknowledge interrupts on exit" were set, the kernel should
+acknowledge the interrupt, likely storing the interrupt data for the user code to handle.
 
 ### Question 5.4
 
@@ -186,7 +233,9 @@ Fill in this file and hand it in with your code. Replace each
 > length (for instance 2) instead? Name one instruction in `helloguestasm.S`
 > or `helloguest.c` that shows the problem.
 
-**Answer:** (your answer)
+**Answer:** If the instruction length weren't exactly 2, this woulkd move the instruction pointer
+to the wrong location and cause undefined behavior in the guest. This would cause an error with the
+VM exits for the `out` instruction, which are only 1 byte.
 
 ## Part 6: The other half: the monitor (runvm) and the guest
 
@@ -197,7 +246,11 @@ Fill in this file and hand it in with your code. Replace each
 > And why does `completein()` read RAX with `vmgetreg()` for a 1-byte
 > `IN` but not for a 4-byte one?
 
-**Answer:** (your answer)
+**Answer:** We are emulating the guest instruction which sets the guest register, so we set the
+guest register via `vmsetreg`. A return value from `completein` or `doio` has no meaning and does
+nothing to this end. A 1- or 2-byte IN _modifies_ the guest's RAX, so it neeeds to read the value
+to change it beffore writing. A 4-byte IN zero-extends the rest of RAX, so there is no need to
+read the unused value.
 
 ### Question 6.2
 
@@ -206,7 +259,10 @@ Fill in this file and hand it in with your code. Replace each
 > guest that will go wrong and say why. (Look at the page tables, the
 > `gdtdesc`, and where the first instruction is.)
 
-**Answer:** (your answer)
+**Answer:** `VM_LOAD_ADDR` would point to unused memory below the beginning of the program. This
+would cause the page table, GDT, etc. to link to empty space and be initialized to 0 instead of
+the data from the `.data` section. Jumps, like the `ljump` to `start62` and `call guestmain`
+would also sump to empty memory below the start of the program, and `RIP` would execude a long series of no-ops before re-entering the program at `start` instead of the intended location.
 
 ### Question 6.3
 
@@ -215,7 +271,8 @@ Fill in this file and hand it in with your code. Replace each
 > `runvm helloguest 1` experiment: which message do you get, and which
 > check in the kernel produces it?
 
-**Answer:** (your answer)
+**Answer:** I think the processor would not set LMA, so it the guest wouldn't enter 32-bit
+compatibility mode. When I changed the order/locations of the steps, `runvm helloguest 1` still fails with a `bad memory requirement` and `runvm helloguest` crashes with exception 13.
 
 ### Question 6.4
 
@@ -224,4 +281,7 @@ Fill in this file and hand it in with your code. Replace each
 > put the serial port in `runvm` and not in the kernel? What would you
 > gain, and what would you lose, by emulating it inside the kernel?
 
-**Answer:** (your answer)
+**Answer:** Emulation is the role of thee hypervisor - the kernel just proxies the sensitive VMX
+instructions. Moving this into the kernel would simplify the call stack, remove some system calls,
+and so gain a small speedup - at the expense of precluding the hypervisor from filling its intended
+role of hardware emulation.
