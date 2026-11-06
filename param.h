@@ -10,6 +10,7 @@
 #define MAXOPBLOCKS  10  // max # of blocks any FS op writes
 #define LOGSIZE      (MAXOPBLOCKS*3)  // max data blocks in on-disk log
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
+
 // HW2: FSSIZE is the size of the disk that holds the root file system.
 // mkfs builds an image of exactly FSSIZE blocks, and ide.c panics on a
 // block number at or past it. The host disk grew from stock xv6's 1000

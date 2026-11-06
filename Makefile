@@ -55,7 +55,7 @@ TOOLPREFIX := $(shell if x86_64-elf-objdump -i 2>&1 | grep '^elf64-x86-64' >/dev
 endif
 
 # If the makefile can't find QEMU, specify its path here
-# QEMU = qemu-system-x86_64
+QEMU = /usr/bin/qemu-system-x86_64
 
 # Try to infer the correct QEMU
 ifndef QEMU
@@ -294,7 +294,7 @@ clean:
 	rm -rf guest
 
 # make a printout
-FILES = $(shell grep -v '^\#' runoff.list)
+FILES = $(shell grep -v '^#' runoff.list)
 PRINT = runoff.list runoff.spec README toc.hdr toc.ftr $(FILES)
 
 xv6.pdf: $(PRINT)
