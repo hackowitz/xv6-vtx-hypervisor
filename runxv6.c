@@ -287,6 +287,11 @@ checksum(uchar *p, int len)
 static void
 mptables(void)
 {
+  // The first thing to write is the base memory size: 640 (KB), at 0x413
+  uint64 size = 640;
+  if (vmmem(vm, 0x413, &size, sizeof(uint64), VMMEM_WRITE) < 0)
+    die("vmmem failed writing base memory size");
+
   // The floating pointer (struct mp, 16 bytes, MP spec 4.1) at 0xF0000. Signature _MP_; physaddr,
   // the physical address of the configuration table; length 1 (in 16-byte units); specrev 4
   // (spec 1.4); type 0, meaning “a configuration table is present” (a nonzero value would select
