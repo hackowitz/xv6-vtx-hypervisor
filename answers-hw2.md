@@ -72,7 +72,6 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 
 **Answer:** The VMCS is not accessible after a VMCLEAR - so the value must be copied _before_ the VM is cleared. Because the only entry/exit to the VM is in the VMENTER/VMCLEAR loop, `vm->cr3` is guaranteed to be up-to-date whenever the VMM resumes and not change until the VM resumes.
 
-
 ## Part 3: Booting xv6 in a VM
 
 ### Question 3.1

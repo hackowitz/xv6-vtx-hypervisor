@@ -420,10 +420,39 @@ vmcsinit(struct vm *vm) {
   vmwrite(PIN_BASED_VM_EXEC_CONTROL, pin);
   vmwrite(CPU_BASED_VM_EXEC_CONTROL, cpu);
   vmwrite(SECONDARY_VM_EXEC_CONTROL, cpu2);
+  /*
+   * HW2: keep the base value.  vmxinject() writes this field again
+   * before every entry, as cpuctl plus, when needed, interrupt-window
+   * exiting; it needs the value without that bit to turn it off.
+   */
+  vm->cpuctl = cpu; /* vmrun() adds interrupt-window exiting to it */
+  vmwrite(SECONDARY_VM_EXEC_CONTROL, cpu2);
   vmwrite(VM_EXIT_CONTROLS, exitctl);
   vmwrite(VM_ENTRY_CONTROLS, entryctl);
-  // Exception bitmap
-  vmwrite(EXCEPTION_BITMAP, 0xFFFFFFFF);
+  /*
+   * The exception bitmap has one bit per exception vector 0-31; a set
+   * bit makes that exception cause a VM exit instead of being
+   * delivered through the guest's IDT (SDM 27.6.3).  HW1's hello-world
+   * guest had no IDT, so it set every bit: each guest exception then
+   * exited with its vector, error code and RIP instead of escalating to
+   * a triple fault.  An xv6 guest handles its own exceptions (page
+   * faults, the system-call trap), so here no exception exits.  A guest
+   * without an IDT that faults now triple faults (EXIT_TRIPLE_FAULT).
+   */
+  /*
+   * With a bit set, the hypervisor would have to hand each such
+   * exception back to the guest by injecting it (SDM 29.6), at the cost
+   * of a VM exit every time.  With the bitmap clear, the CPU delivers
+   * exceptions itself, through the IDT that the guest loaded with LIDT.
+   * (INT $64, xv6's system call, is a software interrupt, not an
+   * exception, so the bitmap never applies to it; SDM 28.2.)
+   */
+  vmwrite(EXCEPTION_BITMAP, 0);
+  /*
+   * For page faults the mask/match pair further filters which error
+   * codes exit; with bit 14 clear in the bitmap and mask = match = 0,
+   * no page fault exits (SDM 27.6.3).
+   */
   vmwrite(PAGE_FAULT_ERROR_CODE_MASK, 0);
   vmwrite(PAGE_FAULT_ERROR_CODE_MATCH, 0);
   // Optional features
@@ -621,7 +650,7 @@ vmcreate(char *image, int len, int memsz)
   struct vm *vm;
   uint64 gpa, *pte;
   char *mem;
-  int id, n, off, r;
+  int id, i, n, off, r;
 
   // Ensure memory requirements are valid
   if (memsz <= 0 || memsz > VM_MAXMEM || len < 0 || VM_LOAD_ADDR + len > memsz) {
@@ -682,6 +711,45 @@ vmcreate(char *image, int len, int memsz)
       goto bad;
     }
     memset(mem, 0, PGSIZE);
+    *pte = V2P(mem) | EPT_RWX | EPT_MEMTYPE_WB;
+  }
+  /*
+   * HW2: xv6 programs its local APIC and I/O APIC through memory-mapped
+   * registers at these guest-physical addresses.  Back each with a zeroed
+   * page of ordinary memory: writes are kept and read back, which is all
+   * xv6 needs to boot.  This is not an emulation of either device;
+   * interrupts are delivered by injection instead (vminject()).
+   */
+  /*
+   * Without these pages, xv6's first access to its local APIC would hit
+   * an unmapped guest-physical address and cause an EPT violation exit,
+   * which runxv6 treats as fatal.
+   */
+  for (i = 0; i < 2; i++) {
+    /* Page 0 is the local APIC, page 1 the I/O APIC. */
+    gpa = i == 0 ? VM_LAPIC_ADDR : VM_IOAPIC_ADDR;
+    /*
+     * Both addresses lie just below 4 GB, far above memsz (at most
+     * VM_MAXMEM), so the loop above did not reach them: eptwalk() with
+     * alloc = 1 creates the EPT tables on the way to them.
+     */
+    if ((pte = eptwalk(vm->ept, gpa, 1)) == 0 || (mem = kalloc()) == 0)
+      goto bad;
+    /*
+     * Zeroed, every location reads as 0 until xv6 writes it, and then
+     * as the value written.  So the local APIC ID reads 0, the APIC id
+     * that runxv6's MP table gives the one CPU, and the I/O APIC ID
+     * reads 0, the id in the MP table's I/O APIC entry.  The
+     * delivery-status bit (12) of the interrupt command register, which
+     * xv6 polls after writing that register, reads back as the 0 that
+     * xv6 wrote, so the poll ends at once.
+     */
+    memset(mem, 0, PGSIZE);
+    /*
+     * A real APIC page is uncached device memory.  This one is ordinary
+     * write-back memory: nothing reacts to the guest's stores, so
+     * caching them does no harm.
+     */
     *pte = V2P(mem) | EPT_RWX | EPT_MEMTYPE_WB;
   }
 
