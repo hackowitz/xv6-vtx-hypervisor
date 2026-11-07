@@ -1046,7 +1046,8 @@ gpa2kva(struct vm *vm, uint64 gpa)
 static int
 gva2gpa(struct vm *vm, uint64 gva, uint64 *gpa)
 {
-  uint64 e = vm->cr3, *table, shift, mask;
+  // not really 'EPT' address but it uses the same mask
+  uint64 e = EPT_ADDR(vm->cr3), *table, mask, shift = 12 + 9 * 3;
   int level;
   // If CR0.PG = 0, paging is not used.
   if ((vm->cr0 & CR0_PG) == 0) {
@@ -1066,18 +1067,36 @@ gva2gpa(struct vm *vm, uint64 gva, uint64 *gpa)
   // LA57 not implemented and not checked
 
   table = (uint64 *)gpa2kva(vm, EPT_ADDR(e)); // PML4
-  for (level = 3; level >= 0; --level) {
-    shift = 12 + 9 * level;
-    e = table[(gva >> shift) & 0x01FF];
-    if ((e & PTE_P) == 0) // Page not present
-      return -1;
-    table = (uint64 *)gpa2kva(vm, EPT_ADDR(e));
-    if (level && (e & PTE_PS)) // If page size flag is set, this is the leaf entry
-      break;
-  }
+  e = table[(gva >> shift) & 0x01FF];         // PML4E
+  if (!(e & PTE_P))
+    return -1;
+
+  shift = 12 + 9 * 2;
+  table = (uint64 *)gpa2kva(vm, EPT_ADDR(e)); // PDPT
+  e = table[(gva >> shift) & 0x01FF];         // PDPTE
+  if (!(e & PTE_P))
+    return -1;
+  if (e & PTE_PS)
+    goto ok;
+
+  shift = 12 + 9;
+  table = (uint64 *)gpa2kva(vm, EPT_ADDR(e)); // PD
+  e = table[(gva >> shift) & 0x01FF];         // PDE
+  if (!(e & PTE_P))
+    return -1;
+  if (e & PTE_PS)
+    goto ok;
+
+  shift = 12;
+  table = (uint64 *)gpa2kva(vm, EPT_ADDR(e)); // PT
+  e = table[(gva >> shift) & 0x01FF];         // PTE
+  if (!(e & PTE_P))
+    return -1;
+
+ok:
   // `table` is now the leaf entry
   mask = (~0ULL) << shift;
-  *gpa = ((uint64)table & mask) | (gva & ~mask);
+  *gpa = (e & mask) | (gva & ~mask);
   return 0;
 }
 
