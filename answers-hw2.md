@@ -50,25 +50,27 @@ in answers.md). Replace each
 
 > `gva2gpa()` tests bit 7 (`PS`) of the entry only at the PDPT and PD levels. What does bit 7 mean in a PML4 entry and in a page-table entry (SDM Tables 5-15 and 5-20)? Describe a concrete guest mapping that a walk testing `PS` at every level would translate wrongly, and what it would return.
 
-**Answer:** (your answer)
+**Answer:** The bit is reserved (must be 0) for a PDPTE and determines the memory type for a PTE. Testing PS _should_ be safe but unnecessary for a PDPTE, since the branch would never be taken. In my implementation, the test for the PTE would also be safe, since in one case the flag marks the current table as a leaf table and jumps to the physical address calculation and in the other case the bottom-level of the paging structure falls through to the physical address calculation.
 
 ### Question 2.2
 
 > `gva2gpa()` reads every page-table entry through `gpa2kva()`, that is, through the EPT. Why can it not use `P2V()` on the table address, as xv6's own `walkpglevel()` (in `vm.c`) does for its page tables? Which memory would `P2V(table)` read? How does the CPU solve the same problem when the guest itself accesses memory (SDM 31.3.1)?
 
-**Answer:** (your answer)
+**Answer:** The "physical" addresses are the _guest's_ physical, not the host's. Since the guest's CR3 is no longer active, a memory access using P2V would use the _host's_ paging structure in hardware, so one more level of abstraction is necessary.
+
+VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so the hardware virtual address translation happens appropriately for the guest not the host. 
 
 ### Question 2.3
 
 > xv6's IDE driver reads a sector with `insl(0x1f0, b->data, BSIZE/4)`, 512 bytes into `b->data`. Suppose `b->data` starts 256 bytes before the end of a guest page. Describe, iteration by iteration, what `vmmem()` does with this request. Why would one translation followed by one 512-byte `memmove()` be wrong, even though the guest kernel maps its data to consecutive guest-physical pages?
 
-**Answer:** (your answer)
+**Answer:** `memmove` must respect the real physical memory layout, which is different from host virtual, guest physical, or guest virtual. The page size is always guaranteed to be some multiple of 4KB regardless of implemetation (and our implementation does uses exactly in the EPT), regardless of how "guest physical" memory is presented, so the buffer is consumed in 4KB-aligned chunks. While the buffer is not empty, the relevant guest address in translated to host virtual, and the number `n` of of bytes to consume from the buffer is calculated to stay within a 4KB page before movin `n` bytes from the buffer to or from the guest page.
 
 ### Question 2.4
 
 > `vmrun()` saves `GUEST_CR3` into `vm->cr3` after every exit. Why can `vmmem()` not simply call `vmread(GUEST_CR3)` when it needs the value? And why is the saved value never out of date when `vmmem()` uses it?
 
-**Answer:** (your answer)
+**Answer:** The VMCS is not accessible after a VMCLEAR - so the value must be copied _before_ the VM is cleared. Because the only entry/exit to the VM is in the VMENTER/VMCLEAR loop, `vm->cr3` is guaranteed to be up-to-date whenever the VMM resumes and not change until the VM resumes.
 
 
 ## Part 3: Booting xv6 in a VM
