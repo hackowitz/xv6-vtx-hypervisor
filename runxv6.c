@@ -219,7 +219,7 @@ loadkernel(char *image, int size)
      * bss included, inside guest memory: the guest would use all memsz
      * bytes of it.
      */
-    if(ph->off + ph->filesz > size || ph->paddr + ph->memsz > GUESTMEM)
+    if (ph->off + ph->filesz > size || ph->paddr + ph->memsz > GUESTMEM)
       die("a kernel segment does not fit");
     /*
      * Without VMMEM_VIRT, the address is guest-physical: copy filesz
@@ -287,7 +287,71 @@ checksum(uchar *p, int len)
 static void
 mptables(void)
 {
-  /* HW2 Part 3: write this function; see HW2.md. */
+  // The floating pointer (struct mp, 16 bytes, MP spec 4.1) at 0xF0000. Signature _MP_; physaddr,
+  // the physical address of the configuration table; length 1 (in 16-byte units); specrev 4
+  // (spec 1.4); type 0, meaning “a configuration table is present” (a nonzero value would select
+  // one of the spec’s default configurations, which xv6 rejects); and imcrp 0, meaning no IMCR, so
+  // mpinit() leaves ports 0x22 and 0x23 alone.
+  struct mp pointer = {
+      .signature = "_MP_",    // what mpsearch() scans for, 16 bytes at a time
+      .physaddr = 0x000F0010, // the physical address of the configuration table;
+      .length = 1,            // in 16-byte units;
+      .specrev = 4,           // 4 (spec 1.4);
+      .checksum = 0,          // xor of all other bytes in the struct
+      .type = 0,              // 0, meaning “a configuration table is present”;
+      .imcrp = 0,             // 0, meaning no IMCR, so mpinit() leaves ports 0x22 and 0x23 alone.
+      .reserved = ""
+  };
+  pointer.checksum = checksum((uchar *)&pointer, sizeof(pointer));
+  if (vmmem(vm, 0x000F0000, &pointer, sizeof(pointer), VMMEM_WRITE) < 0)
+    die("vmmem failed writing mp");
+
+  struct {
+    // The configuration table header (struct mpconf, 44 bytes, MP spec 4.2) at 0xF0010, right after
+    // the floating pointer. Signature PCMP; length, the size in bytes of the header and all
+    // entries; version 4 (mpconfig() accepts 1 or 4); entry, the number of entries; lapicaddr, the
+    // local APIC address, VM_LAPIC_ADDR (xv6 sets its lapic pointer from it). product is free text.
+    struct mpconf header;
+    // Directly after the header, the entries: one processor entry (struct mpproc, 20 bytes, type
+    // MPPROC, MP spec 4.3.1), enabled (flags bit 0) and the bootstrap processor (MPBOOT); and one
+    // I/O APIC entry (struct mpioapic, 8 bytes, type MPIOAPIC, MP spec 4.3.3), enabled, at
+    // VM_IOAPIC_ADDR.
+    struct mpproc proc;
+    struct mpioapic apic;
+  } conf = {
+      .header =
+          {.signature = "PCMP",         // "PCMP"
+           .length = 0,                 // total table length
+           .version = 4,                // [14]
+           .checksum = 0,               // all bytes must add up to 0
+           .product = "XV6 VMX mpconf", // product id
+           .oemtable = 0,               // OEM table pointer
+           .oemlength = 0,              // OEM table length
+           .entry = 2,                  // entry count
+           .lapicaddr = VM_LAPIC_ADDR,  // address of local APIC
+           .xlength = 0,                // extended table length
+           .xchecksum = 0,              // extended table checksum
+           .reserved = '\0'},
+      .proc =
+          {.type = MPPROC,
+           .apicid = 0,
+           .version = 0,
+           .flags = 0x01 | 0x02, // EN | BP
+           .signature = "",
+           .feature = 0,
+           .reserved = ""},
+      .apic = {
+          .type = MPIOAPIC,      // entry type (2)
+          .apicno = 0,           // I/O APIC id
+          .version = 0,          // I/O APIC version
+          .flags = 0,            // I/O APIC flags
+          .addr = VM_IOAPIC_ADDR // I/O APIC address
+      }
+  };
+  conf.header.length = sizeof(conf);
+  conf.header.checksum = checksum((uchar *)&conf, sizeof(conf));
+  if (vmmem(vm, pointer.physaddr, &conf, conf.header.length, VMMEM_WRITE) < 0)
+    die("vmmem failed writing mpconf");
 }
 
 /* ------------------------------------------------------------------

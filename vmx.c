@@ -1170,6 +1170,7 @@ ok:
   // `table` is now the leaf entry
   mask = (~0ULL) << shift;
   *gpa = (e & mask) | (gva & ~mask);
+  cprintf("DEBUG: GVA 0x%x -> GPA 0x%x", (uint64)gva, (uint64)gpa);
   return 0;
 }
 
@@ -1218,6 +1219,14 @@ vmmem(int id, uint64 addr, char *buf, int len, int flags)
     /* Then through the EPT to the host page; 0 if outside the guest. */
     if ((k = gpa2kva(vm, gpa)) == 0)
       return -1;
+    cprintf(
+        "DEBUG: Copy BUF 0x%x <-> ADDR 0x%x @ GPA 0x%x, FLAGS=0x%x\n",
+        (uint64)buf,
+        addr,
+        (uint64)gpa,
+        (uint64)flags
+    );
+
     /* Stay within one guest page: the next one may be elsewhere. */
     /*
      * Translation keeps the low 12 bits, so the page offset of addr +
@@ -1304,14 +1313,15 @@ nextpending(struct vm *vm)
 static void
 vmxcpuid(struct vm *vm)
 {
-  uint leaf = vm->regs.rax, subleaf = vm->regs.rcx, a, b, c, d;
+  uint leaf = vm->regs.rax, subleaf = vm->regs.rcx, a, b, c, d; // truncates 64->32 bits
   asm volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(leaf), "c"(subleaf));
   if (leaf == 1)
-    c &= ~CPUID1_ECX_VMX; // hide VMX from the guest
-  vm->regs.rax = a & 0xFFFFFFFF;
-  vm->regs.rbx = b & 0xFFFFFFFF;
-  vm->regs.rcx = c & 0xFFFFFFFF;
-  vm->regs.rdx = d & 0xFFFFFFFF;
+    c ^= CPUID1_ECX_VMX; // hide VMX from the guest
+  // casting 32->64-bit zero-extends
+  vm->regs.rax = (uint64)a;
+  vm->regs.rbx = (uint64)b;
+  vm->regs.rcx = (uint64)c;
+  vm->regs.rdx = (uint64)d;
 }
 
 /*
