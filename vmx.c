@@ -448,6 +448,7 @@ vmcsinit(struct vm *vm) {
    * exception, so the bitmap never applies to it; SDM 28.2.)
    */
   vmwrite(EXCEPTION_BITMAP, 0);
+  // vmwrite(EXCEPTION_BITMAP, 0xFFFFFFFF);
   /*
    * For page faults the mask/match pair further filters which error
    * codes exit; with bit 14 clear in the bitmap and mask = match = 0,
@@ -902,6 +903,10 @@ vmxhandle(struct vm *vm, struct vmexit *e, uint inslen)
   case EXIT_HLT:
     vm->rip += inslen;
     return 0;
+  case EXIT_CPUID:
+    vmxcpuid(vm);
+    vm->rip += inslen;
+    return 1;
   case EXIT_IO:
     vm->rip += inslen;
     e->io.size = (e->qual & 0x00000007) + 1;   // 0 = 1-byte, 1 = 2-byte, 3 = 4-byte
@@ -1299,7 +1304,14 @@ nextpending(struct vm *vm)
 static void
 vmxcpuid(struct vm *vm)
 {
-  /* HW2 Part 3: write this function; see HW2.md. */
+  uint leaf = vm->regs.rax, subleaf = vm->regs.rcx, a, b, c, d;
+  asm volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(leaf), "c"(subleaf));
+  if (leaf == 1)
+    c &= ~CPUID1_ECX_VMX; // hide VMX from the guest
+  vm->regs.rax = a & 0xFFFFFFFF;
+  vm->regs.rbx = b & 0xFFFFFFFF;
+  vm->regs.rcx = c & 0xFFFFFFFF;
+  vm->regs.rdx = d & 0xFFFFFFFF;
 }
 
 /*
