@@ -961,6 +961,15 @@ vmrun(int id, struct vmexit *ue)
       /* Saved because of EXIT_SAVE_IA32_EFER; picks up a new LMA. */
       vm->efer = vmread(GUEST_IA32_EFER);
       e.rip = vm->rip;
+      /*
+       * The guest's own control registers, as the exit saved them (SDM
+       * 30.3.1): the real values, not the read shadows (GUEST_CR4 has
+       * VMXE set).  vmmem() runs after vmrun() has VMCLEARed the VMCS,
+       * when VMREAD is impossible, so keep copies.
+       */
+      vm->cr0 = vmread(GUEST_CR0);
+      vm->cr3 = vmread(GUEST_CR3);
+      vm->cr4 = vmread(GUEST_CR4);
     }
     /* Release the VMCS and turn interrupts back on (HW1 part 5, Step 8). */
     vmclear(V2P(vm->vmcs));
@@ -1005,8 +1014,25 @@ vmxfreeproc(struct proc *p)
 static char*
 gpa2kva(struct vm *vm, uint64 gpa)
 {
-  /* HW2 Part 2: paste Step 2 of HW2.md. */
-  return 0;
+  uint64 *pte;
+
+  /*
+   * Walk the EPT in software, as the CPU does for every guest access.
+   * alloc = 0: never create tables; eptwalk() returns 0 when a table
+   * on the way is missing (gpa is above memsz and is not an APIC page).
+   * A leaf entry may exist but be empty, if its page table was created
+   * for a neighboring page; no R/W/X bit means "not present".
+   */
+  if ((pte = eptwalk(vm->ept, gpa, 0)) == 0 || !(*pte & EPT_RWX))
+    return 0;
+  /*
+   * EPT_ADDR() keeps the host-physical address of the 4 KB page (bits
+   * 51:12), dropping the permission and memory-type bits; P2V() turns it
+   * into the kernel's mapping of that page, and the low 12 bits of gpa
+   * are the offset in it.  The result is good only up to the end of
+   * this page: the next guest page may be anywhere in host memory.
+   */
+  return (char *)P2V(EPT_ADDR(*pte)) + gpa % PGSIZE;
 }
 
 /*
@@ -1020,12 +1046,39 @@ gpa2kva(struct vm *vm, uint64 gpa)
 static int
 gva2gpa(struct vm *vm, uint64 gva, uint64 *gpa)
 {
-  uint64 table, e, size;
-  uint64 *p;
+  uint64 e = vm->cr3, *table, shift, mask;
   int level;
+  // If CR0.PG = 0, paging is not used.
+  if ((vm->cr0 & CR0_PG) == 0) {
+    *gpa = gva;
+    return 0;
+  }
+  // If CR4.PAE = 0, 32-bit paging is used.
+  if ((vm->cr4 & CR4_PAE) == 0)
+    return -1; // not implemented
 
-  /* HW2 Part 2: write this function; see HW2.md. */
-  return -1;
+  // If CR4.PAE = 1 and IA32_EFER.LME = 0, PAE paging is used.
+  if ((vm->efer & EFER_LMA) == 0)
+    return -1; // not implemented
+
+  // If CR4.PAE = 1, IA32_EFER.LME = 1, and CR4.LA57 = 0, 4-level paging1 is used.
+  // If CR4.PAE = 1, IA32_EFER.LME = 1, and CR4.LA57 = 1, 5-level paging is used.
+  // LA57 not implemented and not checked
+
+  table = (uint64 *)gpa2kva(vm, EPT_ADDR(e)); // PML4
+  for (level = 3; level >= 0; --level) {
+    shift = 12 + 9 * level;
+    e = table[(gva >> shift) & 0x01FF];
+    if ((e & PTE_P) == 0) // Page not present
+      return -1;
+    table = (uint64 *)gpa2kva(vm, EPT_ADDR(e));
+    if (level && (e & PTE_PS)) // If page size flag is set, this is the leaf entry
+      break;
+  }
+  // `table` is now the leaf entry
+  mask = (~0ULL) << shift;
+  *gpa = ((uint64)table & mask) | (gva & ~mask);
+  return 0;
 }
 
 /*
@@ -1045,8 +1098,52 @@ vmmem(int id, uint64 addr, char *buf, int len, int flags)
   char *k;
   int n, off;
 
-  /* HW2 Part 2: paste Steps 4 and 5 of HW2.md. */
-  return -1;
+  /*
+   * Only the owner may touch the VM's memory.  The guest is not running
+   * now: xv6 processes have one thread, and this one is in a system
+   * call, not in vmrun().  buf is the caller's user buffer, which
+   * sys_vmmem() checked with argptr(); the kernel can use it directly
+   * because it runs on the process's page table.
+   */
+  if ((vm = getvm(id)) == 0 || len < 0)
+    return -1;
+  /*
+   * One page per iteration.  Contiguous guest addresses need not be
+   * contiguous in host memory: each 4 KB guest-physical page is its own
+   * kalloc() page, and consecutive guest-virtual pages may map to
+   * unrelated guest-physical ones.  So translate again at every page
+   * boundary.  Even inside a 2 MB or 1 GB guest page, the EPT maps
+   * 4 KB pages, so the copy still stops at each 4 KB boundary.
+   */
+  for (off = 0; off < len; off += n) {
+    if (flags & VMMEM_VIRT) {
+      /* Through the guest's page tables, as the guest's MMU would. */
+      if (gva2gpa(vm, addr + off, &gpa) < 0)
+        return -1;
+    } else {
+      gpa = addr + off;
+    }
+    /* Then through the EPT to the host page; 0 if outside the guest. */
+    if ((k = gpa2kva(vm, gpa)) == 0)
+      return -1;
+    /* Stay within one guest page: the next one may be elsewhere. */
+    /*
+     * Translation keeps the low 12 bits, so the page offset of addr +
+     * off is also that of gpa and of k.
+     */
+    n = PGSIZE - (addr + off) % PGSIZE;
+    if (n > len - off)
+      n = len - off;
+    /*
+     * A failure on a later page returns -1 with the earlier pages
+     * already copied; runxv6 treats any failure as fatal anyway.
+     */
+    if (flags & VMMEM_WRITE)
+      memmove(k, buf + off, n);
+    else
+      memmove(buf + off, k, n);
+  }
+  return len;
 }
 
 /*

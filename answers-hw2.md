@@ -16,32 +16,33 @@ in answers.md). Replace each
 
 > What is the largest file, in blocks and in bytes, that xv6 can hold with the layout of Step 4? How many disk blocks does `xv6fs.img` (1,024,000 bytes) occupy as a file in `fs.img`, counting its pointer blocks? How large could a file be if `BSIZE` were 1024 bytes instead of 512?
 
-**Answer:** (your answer)
+**Answer:** There are 12 blocks fron inode + 128^2 from doubly-linked indirect blocks with 512/4 32-bit (4-byte) entries each. This totals 16396 blocks for 8394752 bytes (just over 8MB) total. If BS=1024, we get 12+(1024/4)^2 = 65548 blocks = 67121152 bytes > 64MB.
 
 ### Question 1.2
 
 > Suppose someone changes `GUESTMEM` in `runxv6.c` to 16 MB and forgets the Makefile. What happens when the guest boots, at about which guest-physical address, and why? What happens in the opposite case (`GUESTMEM` 64 MB, `PHYSTOP` still 32 MB)?
 
-**Answer:** (your answer)
+**Answer:** If `GUESTMEM < PHYSTOP`, the EPT would not map the upper pages of guest physical memory, and the guest would error during boot while calling `kfree` for each of it's guest physical pages. Assuming the guest builds the free liost sequentially, the first address to error would be at `GUESTMEM`. Vice versa, if `GUESTMEM > PHYSTOP`, the host gives the guest extra pages but the guest is hard-coded not to use them, so the guest runs correctly and the host wastes some memory.
 
 ### Question 1.3
 
 > `runxv6` must pass your keystrokes to the guest while it keeps the guest running. Explain why it needs *both* `fdready()` and `consraw()`: what would go wrong with `fdready()` alone (console still in line mode), and what would go wrong with `consraw()` alone (no `fdready()`)?
 
-**Answer:** (your answer)
+**Answer:**
+- Withoud `consraw()`: The host would print back charactes as they are typed, block VM entry until a newline, and capture excape sequences meant for the guest.
+- Without `fdready()`: The console could not know if a read operation would block and non-blocking input would not be possible, again blocking VM entry on console input and open pipes.
 
 ### Question 1.4
 
 > Why did we turn `addrs[12]` into a doubly-indirect block instead of adding a 14th address to the inode? Give one advantage the classic 11 direct + singly-indirect + doubly-indirect layout has over ours, and explain why the difference matters little in practice.
 
-**Answer:** (your answer)
+**Answer:** 64-byte inodes fit evenly in a block, but another entry would change the inode size to 68 and either waste space in each inode block or cause alignment issues with inodes spanning multiple blocks. The classic layout keeps a lower level of indirection for small (<=69.5KB) files, which reduces disk reads and improves cache performance, but adds some code complexity to determine the degree of indirection. The difference is not significant for sequential reads, since indirect blocks in the upper level are read 128 times in a row and stay in the cache.
 
 ### Question 1.5
 
 > The Makefile builds the guest kernel's objects in `guest/` instead of next to the host kernel's. Describe what could go wrong, step by step, if both kernels were built in the same directory, and which kernel would end up broken.
 
-**Answer:** (your answer)
-
+**Answer:** `make` does not distinguish between files with the same filename but different target. Building the guest and the host would use cached build files (based on their `mtime`) from one target for the other, and could break the guest if a cached file is compiled with the host's `PHYSTOP` that does not match the host's `GUESTMEM` (see 1.2).
 
 ## Part 2: Reading and writing guest memory
 
