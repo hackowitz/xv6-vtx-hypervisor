@@ -320,31 +320,20 @@ mptables(void)
     struct mpioapic apic;
   } conf = {
       .header =
-          {.signature = "PCMP",         // "PCMP"
-           .length = 0,                 // total table length
-           .version = 4,                // [14]
-           .checksum = 0,               // all bytes must add up to 0
-           .product = "XV6 VMX mpconf", // product id
-           .oemtable = 0,               // OEM table pointer
-           .oemlength = 0,              // OEM table length
-           .entry = 2,                  // entry count
-           .lapicaddr = VM_LAPIC_ADDR,  // address of local APIC
-           .xlength = 0,                // extended table length
-           .xchecksum = 0,              // extended table checksum
-           .reserved = '\0'},
+          {
+              .signature = "PCMP",         // "PCMP"
+              .version = 4,                // [14]
+              .product = "XV6 VMX mpconf", // product id
+              .entry = 2,                  // entry count
+              .lapicaddr = VM_LAPIC_ADDR,  // address of local APIC
+          },
       .proc =
-          {.type = MPPROC,
-           .apicid = 0,
-           .version = 0,
-           .flags = 0x01 | 0x02, // EN | BP
-           .signature = "",
-           .feature = 0,
-           .reserved = ""},
+          {
+              .type = MPPROC,
+              .flags = 0x01 | 0x02, // EN | BP
+          },
       .apic = {
           .type = MPIOAPIC,      // entry type (2)
-          .apicno = 0,           // I/O APIC id
-          .version = 0,          // I/O APIC version
-          .flags = 0,            // I/O APIC flags
           .addr = VM_IOAPIC_ADDR // I/O APIC address
       }
   };
