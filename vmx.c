@@ -42,16 +42,16 @@
  *   exit()      calls vmxfreeproc() to free the process's VMs
  */
 
-#include "types.h"
+#include "vmx.h"
 #include "defs.h"
-#include "param.h"
 #include "memlayout.h"
 #include "mmu.h"
+#include "param.h"
 #include "proc.h"
-#include "x86.h"
 #include "spinlock.h"
-#include "vmx.h"
+#include "types.h"
 #include "vmxapi.h"
+#include "x86.h"
 
 /* Maximum number of VMs in the whole system (all processes). */
 #define NVM 4
@@ -62,12 +62,12 @@
  * keep in ordinary memory between vmrun() calls.
  */
 struct vm {
-  int used;                /* slot in use; protected by vms.lock */
-  struct proc *owner;      /* only this process may use the VM */
-  char *vmcs;              /* VMCS page (4 KB, 4 KB-aligned by kalloc) */
-  uint64 *ept;             /* EPT PML4 (kernel virtual address) */
-  uint64 eptp;             /* EPT pointer: PML4 phys addr | type | walk */
-  uint64 memsz;            /* bytes of guest-physical memory */
+  int used;           /* slot in use; protected by vms.lock */
+  struct proc *owner; /* only this process may use the VM */
+  char *vmcs;         /* VMCS page (4 KB, 4 KB-aligned by kalloc) */
+  uint64 *ept;        /* EPT PML4 (kernel virtual address) */
+  uint64 eptp;        /* EPT pointer: PML4 phys addr | type | walk */
+  uint64 memsz;       /* bytes of guest-physical memory */
   /*
    * Guest state kept here between runs, and copied to and from the
    * VMCS around each entry.  The general-purpose registers are not in
@@ -77,7 +77,7 @@ struct vm {
    */
   struct guestregs regs;
   uint64 rip, rsp, rflags, efer;
-  uint flushed;            /* CPUs where INVEPT has run for this EPTP */
+  uint flushed; /* CPUs where INVEPT has run for this EPTP */
   /*
    * HW2. More guest state, saved at each exit: the control registers
    * (vmmem() walks the guest's page tables with them), and what
@@ -98,7 +98,7 @@ struct vm {
    * an interrupt may be injected.  It is never written back: the VMCS
    * keeps its own copy of the field across VMCLEAR and VMPTRLD.
    */
-  uint intrstate;          /* guest interruptibility state (STI, MOV SS) */
+  uint intrstate; /* guest interruptibility state (STI, MOV SS) */
   /*
    * The original-event identification field (called IDT-vectoring
    * information in older SDMs; SDM 27.9.3, Table 27-21) and the
@@ -107,33 +107,33 @@ struct vm {
    * through the guest's IDT; vmxinject() delivers it again on the next
    * entry and then zeroes idtvec.
    */
-  uint idtvec, idterr;     /* event being delivered when the guest exited */
+  uint idtvec, idterr; /* event being delivered when the guest exited */
   /*
    * The VM-exit instruction length of that exit.  For an exit during the
    * delivery of a software interrupt or exception (INT n, INT3, INTO,
    * INT1) it is the length of that instruction (SDM 30.2.5), which
    * re-injection needs (see vmxinject()).
    */
-  uint idtlen;             /* its instruction length (software events) */
+  uint idtlen; /* its instruction length (software events) */
   /*
    * The primary processor-based controls computed by vmcsinit().
    * vmxinject() rewrites the VMCS field from this value on every entry,
    * adding interrupt-window exiting only when it is needed, so that the
    * control is off again once the interrupt has been injected.
    */
-  uint cpuctl;             /* primary processor-based controls, from vmcsinit */
+  uint cpuctl; /* primary processor-based controls, from vmcsinit */
   /*
    * 256 bits, one per vector, like the interrupt request register (IRR)
    * of a local APIC (SDM 13.8.4): bit v % 64 of pending[v / 64] says
    * that vector v waits to be injected.  Requests for a vector that is
    * already pending collapse into its one bit, as in the IRR.
    */
-  uint64 pending[4];       /* external interrupts to inject: a bit per vector */
+  uint64 pending[4]; /* external interrupts to inject: a bit per vector */
   /*
    * The host's tick count (ticks, trap.c) when vmrun() was called; the
    * EXIT_EXTERNAL_INTR case of vmxhandle() compares it with ticks.
    */
-  uint starttick;          /* host ticks when vmrun() was called */
+  uint starttick; /* host ticks when vmrun() was called */
 };
 
 /*
@@ -149,7 +149,7 @@ static void vmxinject(struct vm *vm);
 static struct {
   struct spinlock lock;
   struct vm vm[NVM];
-} vms = { .lock = { .name = "vms" } };
+} vms = {.lock = {.name = "vms"}};
 
 /* VMCS revision identifier from IA32_VMX_BASIC; same on every CPU. */
 static uint vmcs_revision;
@@ -166,10 +166,8 @@ int vmx_enter(struct guestregs *regs, int launched);
  * vmxinit() to test for VMX support.
  */
 static inline void
-cpuid_insn(uint leaf, uint *a, uint *b, uint *c, uint *d)
-{
-  asm volatile("cpuid" : "=a" (*a), "=b" (*b), "=c" (*c), "=d" (*d)
-               : "a" (leaf), "c" (0));
+cpuid_insn(uint leaf, uint *a, uint *b, uint *c, uint *d) {
+  asm volatile("cpuid" : "=a"(*a), "=b"(*b), "=c"(*c), "=d"(*d) : "a"(leaf), "c"(0));
 }
 
 /*
@@ -185,10 +183,9 @@ cpuid_insn(uint leaf, uint *a, uint *b, uint *c, uint *d)
  * address, hence the "m" constraint.  Called only by vmxinit().
  */
 static inline int
-vmxon(uint64 pa)
-{
+vmxon(uint64 pa) {
   uchar fail;
-  asm volatile("vmxon %1; setna %0" : "=q" (fail) : "m" (pa) : "cc", "memory");
+  asm volatile("vmxon %1; setna %0" : "=q"(fail) : "m"(pa) : "cc", "memory");
   return fail ? -1 : 0;
 }
 
@@ -199,10 +196,9 @@ vmxon(uint64 pa)
  * every exit in vmrun().
  */
 static inline int
-vmclear(uint64 pa)
-{
+vmclear(uint64 pa) {
   uchar fail;
-  asm volatile("vmclear %1; setna %0" : "=q" (fail) : "m" (pa) : "cc", "memory");
+  asm volatile("vmclear %1; setna %0" : "=q"(fail) : "m"(pa) : "cc", "memory");
   return fail ? -1 : 0;
 }
 
@@ -211,10 +207,9 @@ vmclear(uint64 pa)
  * this CPU.  VMREAD/VMWRITE/VMLAUNCH all operate on the current VMCS.
  */
 static inline int
-vmptrld(uint64 pa)
-{
+vmptrld(uint64 pa) {
   uchar fail;
-  asm volatile("vmptrld %1; setna %0" : "=q" (fail) : "m" (pa) : "cc", "memory");
+  asm volatile("vmptrld %1; setna %0" : "=q"(fail) : "m"(pa) : "cc", "memory");
   return fail ? -1 : 0;
 }
 
@@ -226,10 +221,9 @@ vmptrld(uint64 pa)
  * loaded VMCS.
  */
 static inline uint64
-vmread(uint64 field)
-{
+vmread(uint64 field) {
   uint64 val;
-  asm volatile("vmread %1, %0" : "=r" (val) : "r" (field) : "cc");
+  asm volatile("vmread %1, %0" : "=r"(val) : "r"(field) : "cc");
   return val;
 }
 
@@ -239,13 +233,11 @@ vmread(uint64 field)
  * the VM-instruction error and panic.
  */
 static void
-vmwrite(uint64 field, uint64 val)
-{
+vmwrite(uint64 field, uint64 val) {
   uchar fail;
-  asm volatile("vmwrite %2, %1; setna %0" : "=q" (fail) : "r" (field), "r" (val) : "cc");
-  if(fail){
-    cprintf("vmwrite 0x%x = 0x%x: error %d\n", field, val,
-            (int)vmread(VM_INSTRUCTION_ERROR));
+  asm volatile("vmwrite %2, %1; setna %0" : "=q"(fail) : "r"(field), "r"(val) : "cc");
+  if (fail) {
+    cprintf("vmwrite 0x%x = 0x%x: error %d\n", field, val, (int)vmread(VM_INSTRUCTION_ERROR));
     panic("vmwrite");
   }
 }
@@ -257,12 +249,12 @@ vmwrite(uint64 field, uint64 val)
  * the EPTP in the low 64 bits and 64 reserved bits.
  */
 static inline int
-invept(uint64 type, uint64 eptp)
-{
-  struct { uint64 eptp, reserved; } desc = { eptp, 0 };
+invept(uint64 type, uint64 eptp) {
+  struct {
+    uint64 eptp, reserved;
+  } desc = {eptp, 0};
   uchar fail;
-  asm volatile("invept %1, %2; setna %0" : "=q" (fail) : "m" (desc), "r" (type)
-               : "cc", "memory");
+  asm volatile("invept %1, %2; setna %0" : "=q"(fail) : "m"(desc), "r"(type) : "cc", "memory");
   return fail ? -1 : 0;
 }
 
@@ -364,12 +356,11 @@ adjustctl(uint msr, uint want, uint *ctl) {
  * though no GDT exists in the guest yet (SDM 27.4.1).
  */
 static void
-guestseg(int seg, uint sel, uint64 base, uint limit, uint ar)
-{
-  vmwrite(GUEST_ES_SELECTOR + 2*seg, sel);
-  vmwrite(GUEST_ES_BASE + 2*seg, base);
-  vmwrite(GUEST_ES_LIMIT + 2*seg, limit);
-  vmwrite(GUEST_ES_AR_BYTES + 2*seg, ar);
+guestseg(int seg, uint sel, uint64 base, uint limit, uint ar) {
+  vmwrite(GUEST_ES_SELECTOR + 2 * seg, sel);
+  vmwrite(GUEST_ES_BASE + 2 * seg, base);
+  vmwrite(GUEST_ES_LIMIT + 2 * seg, limit);
+  vmwrite(GUEST_ES_AR_BYTES + 2 * seg, ar);
 }
 
 /*
@@ -561,16 +552,17 @@ eptwalk(uint64 *pml4, uint64 gpa, int alloc) {
 
   // Walk the three upper levels
   for (level = 3; level > 0; --level) {
-    e = &table[(gpa >> (12 + 9*level)) & 0x01FF];
+    e = &table[(gpa >> (12 + 9 * level)) & 0x01FF];
     if (*e & EPT_RWX) {
       // The entry is present
-      table = (uint64*)P2V(EPT_ADDR(*e));
+      table = (uint64 *)P2V(EPT_ADDR(*e));
     } else {
       // The entry is not present
-      if (!alloc || (next = kalloc()) == 0) return 0;
+      if (!alloc || (next = kalloc()) == 0)
+        return 0;
       memset(next, 0, PGSIZE);
       *e = V2P(next) | EPT_RWX;
-      table = (uint64*)next;
+      table = (uint64 *)next;
     }
   }
 
@@ -585,21 +577,20 @@ eptwalk(uint64 *pml4, uint64 gpa, int alloc) {
  * further tables).  Called by vmfree().
  */
 static void
-eptfree(uint64 *table, int level)
-{
+eptfree(uint64 *table, int level) {
   int i;
 
-  for(i = 0; i < 512; i++){
+  for (i = 0; i < 512; i++) {
     /* Skip entries that were never populated. */
-    if(!(table[i] & EPT_RWX))
+    if (!(table[i] & EPT_RWX))
       continue;
-    if(level > 0)
-      eptfree((uint64*)P2V(EPT_ADDR(table[i])), level - 1);
+    if (level > 0)
+      eptfree((uint64 *)P2V(EPT_ADDR(table[i])), level - 1);
     else
-      kfree((char*)P2V(EPT_ADDR(table[i])));
+      kfree((char *)P2V(EPT_ADDR(table[i])));
   }
   /* Free this table page itself after its children. */
-  kfree((char*)table);
+  kfree((char *)table);
 }
 
 /*
@@ -610,12 +601,11 @@ eptfree(uint64 *table, int level)
  * are null (vmcreate() memsets the struct).
  */
 static void
-vmfree(struct vm *vm)
-{
+vmfree(struct vm *vm) {
   /* Free the EPT tree and all guest pages, then the VMCS page. */
-  if(vm->ept)
+  if (vm->ept)
     eptfree(vm->ept, 3);
-  if(vm->vmcs)
+  if (vm->vmcs)
     kfree(vm->vmcs);
   /* Mark the slot reusable only after its resources are gone. */
   acquire(&vms.lock);
@@ -630,10 +620,9 @@ vmfree(struct vm *vm)
  * Look up VM id and check that the calling process owns it, so one
  * process cannot touch another's VM.  Returns 0 if invalid.
  */
-static struct vm*
-getvm(int id)
-{
-  if(id < 0 || id >= NVM || !vms.vm[id].used || vms.vm[id].owner != myproc())
+static struct vm *
+getvm(int id) {
+  if (id < 0 || id >= NVM || !vms.vm[id].used || vms.vm[id].owner != myproc())
     return 0;
   return &vms.vm[id];
 }
@@ -645,8 +634,7 @@ getvm(int id)
  * is a kernel copy of the guest binary.
  */
 int
-vmcreate(char *image, int len, int memsz)
-{
+vmcreate(char *image, int len, int memsz) {
   static uint64 need = EPT_CAP_WALK_4 | EPT_CAP_MEMTYPE_WB | EPT_CAP_INVEPT | EPT_CAP_INVEPT_SINGLE;
   struct vm *vm;
   uint64 gpa, *pte;
@@ -669,14 +657,16 @@ vmcreate(char *image, int len, int memsz)
   }
 
   // Check the EPT capabilities
-  if ((rdmsr(MSR_IA32_VMX_EPT_VPID_CAP) & need ) != need) {
+  if ((rdmsr(MSR_IA32_VMX_EPT_VPID_CAP) & need) != need) {
     cprintf("vmx: CPU lacks required EPT features\n");
     return -1;
   }
 
   // Claim a slot in the VM table
   acquire(&vms.lock);
-  for (id = 0; id < NVM; ++id) if (!vms.vm[id].used) break;
+  for (id = 0; id < NVM; ++id)
+    if (!vms.vm[id].used)
+      break;
   if (id == NVM) {
     release(&vms.lock);
     cprintf("vmx: VM table full\n");
@@ -698,7 +688,7 @@ vmcreate(char *image, int len, int memsz)
   memset(vm->vmcs, 0, PGSIZE);
 
   // Allocate the EPT root and build the EPTP
-  if ((vm->ept = (uint64*)kalloc()) == 0) {
+  if ((vm->ept = (uint64 *)kalloc()) == 0) {
     cprintf("vmx: failed to allocate EPT\n");
     goto bad;
   }
@@ -758,15 +748,16 @@ vmcreate(char *image, int len, int memsz)
   for (off = 0; off < len; off += n) {
     gpa = VM_LOAD_ADDR + off;
     n = PGSIZE - gpa % PGSIZE;
-    if (n > len - off) n = len - off;
+    if (n > len - off)
+      n = len - off;
     pte = eptwalk(vm->ept, gpa, 0);
-    memmove((char*)P2V(EPT_ADDR(*pte)) + gpa % PGSIZE, image + off, n);
+    memmove((char *)P2V(EPT_ADDR(*pte)) + gpa % PGSIZE, image + off, n);
   }
 
   // Prepare the VMCS
-  *(uint*)vm->vmcs = vmcs_revision;
+  *(uint *)vm->vmcs = vmcs_revision;
   pushcli();
-  if (!mycpu()->vmx_ok || vmclear(V2P(vm->vmcs)) < 0 || vmptrld(V2P(vm->vmcs)) <0) {
+  if (!mycpu()->vmx_ok || vmclear(V2P(vm->vmcs)) < 0 || vmptrld(V2P(vm->vmcs)) < 0) {
     popcli();
     cprintf("vmx: failed to prepare VMCS\n");
     goto bad;
@@ -793,8 +784,7 @@ bad:
  * and vmx_enter loads the general-purpose registers.
  */
 int
-vmsetreg(int id, int reg, uint64 val)
-{
+vmsetreg(int id, int reg, uint64 val) {
   struct vm *vm;
   struct guestregs regs;
   uint64 rip, rsp, rflags, efer;
@@ -826,8 +816,7 @@ vmsetreg(int id, int reg, uint64 val)
  * data into RAX).
  */
 int
-vmgetreg(int id, int reg, uint64 *val)
-{
+vmgetreg(int id, int reg, uint64 *val) {
   struct vm *vm;
 
   if ((vm = getvm(id)) == 0 || reg < 0 || reg >= VMREG_NREGS)
@@ -885,15 +874,13 @@ vmxmsr(struct vm *vm, int write) {
  * Appendix C.
  */
 static int
-vmxhandle(struct vm *vm, struct vmexit *e, uint inslen)
-{
+vmxhandle(struct vm *vm, struct vmexit *e, uint inslen) {
   switch (e->reason) {
   case EXIT_EXTERNAL_INTR:
-    return 1;
+    // re-enter the guest if ticks have not advanced
+    return ticks == vm->starttick;
   case EXIT_EXCEPTION_NMI:
-    if (INTR_INFO_TYPE(e->intrinfo) == INTR_TYPE_NMI)
-      return 1;
-    return 0;
+    return (INTR_INFO_TYPE(e->intrinfo) == INTR_TYPE_NMI);
   case EXIT_RDMSR:
   case EXIT_WRMSR:
     if (vmxmsr(vm, e->reason == EXIT_WRMSR) < 0)
@@ -917,9 +904,11 @@ vmxhandle(struct vm *vm, struct vmexit *e, uint inslen)
       return 0;
     } else if (e->qual & 0x10) // 0=not string, 1=string
       return 1;                // kernel doesn't handle string or io in; give it to user space
-    else                // kernel _does_ handle character output
+    else                       // kernel _does_ handle character output
       e->io.data = vm->regs.rax & iomask(e->io.size);
     return 0;
+  case EXIT_INTR_WINDOW:
+    return 1;
   default:
     return 0;
   }
@@ -936,20 +925,25 @@ vmxhandle(struct vm *vm, struct vmexit *e, uint inslen)
  *  - the host state is rewritten before every entry.
  */
 int
-vmrun(int id, struct vmexit *ue)
-{
+vmrun(int id, struct vmexit *ue) {
   struct vm *vm;
   struct vmexit e;
   uint64 reason, entryctl;
   uint inslen;
   int c, r;
 
-  if((vm = getvm(id)) == 0)
+  if ((vm = getvm(id)) == 0)
     return -1;
 
-  for(;;){
+  /*
+   * HW2: once per call, not per entry: vmxhandle() returns to user
+   * space at the first external-interrupt exit after ticks moves on.
+   */
+  vm->starttick = ticks;
+
+  for (;;) {
     /* Check for kill between guest runs, since the guest may spin. */
-    if(myproc()->killed)
+    if (myproc()->killed)
       return -1;
     memset(&e, 0, sizeof(e));
     inslen = 0;
@@ -989,9 +983,17 @@ vmrun(int id, struct vmexit *ue)
      * every entry: clear the bit, then set it if LMA is on.
      */
     entryctl = vmread(VM_ENTRY_CONTROLS) & ~(uint64)ENTRY_IA32E_MODE_GUEST;
-    if(vm->efer & EFER_LMA)
+    if (vm->efer & EFER_LMA)
       entryctl |= ENTRY_IA32E_MODE_GUEST;
     vmwrite(VM_ENTRY_CONTROLS, entryctl);
+
+    /*
+     * HW2: set up event injection last, right before the entry, with
+     * the VMCS current and interrupts off.  It depends on the RFLAGS
+     * written above, and on anything vminject() queued since the last
+     * entry.
+     */
+    vmxinject(vm);
 
     /*
      * Enter the guest (vmxasm.S).  The second argument is "launched":
@@ -1005,7 +1007,7 @@ vmrun(int id, struct vmexit *ue)
      * Back in the host.  The VMCS is still current on this CPU, so
      * read everything we need now, before VMCLEAR.
      */
-    if(r < 0){
+    if (r < 0) {
       /* VMLAUNCH failed: report the VM-instruction error (SDM 33.4). */
       e.reason = EXIT_VMFAIL;
       e.error = vmread(VM_INSTRUCTION_ERROR);
@@ -1043,6 +1045,28 @@ vmrun(int id, struct vmexit *ue)
       vm->cr0 = vmread(GUEST_CR0);
       vm->cr3 = vmread(GUEST_CR3);
       vm->cr4 = vmread(GUEST_CR4);
+      /*
+       * STI and MOV SS blocking at the time of the exit (SDM 30.3.4),
+       * for vmxinject() on the next entry.
+       */
+      vm->intrstate = vmread(GUEST_INTERRUPTIBILITY_INFO);
+      /*
+       * The original-event identification.  Read it after every exit,
+       * before VMCLEAR: the next exit overwrites it, and a valid event
+       * not re-injected is lost (see vmxinject()).
+       */
+      vm->idtvec = vmread(IDT_VECTORING_INFO);
+      /*
+       * The error code and instruction length mean something only for
+       * a valid event (SDM 30.2.4): the error code if bit 11 is set,
+       * the length for software events.  For an exit during delivery
+       * of a software interrupt or exception, the VM-exit instruction
+       * length is that of the INT instruction (SDM 30.2.5).
+       */
+      if (vm->idtvec & INTR_INFO_VALID) {
+        vm->idterr = vmread(IDT_VECTORING_ERROR_CODE);
+        vm->idtlen = inslen;
+      }
     }
     /* Release the VMCS and turn interrupts back on (HW1 part 5, Step 8). */
     vmclear(V2P(vm->vmcs));
@@ -1052,7 +1076,7 @@ vmrun(int id, struct vmexit *ue)
      * Failed entries and VMLAUNCH failures always go to user space.
      * Otherwise vmxhandle() decides; returning 1 loops to re-enter.
      */
-    if(e.reason == EXIT_VMFAIL || e.entryfail || !vmxhandle(vm, &e, inslen))
+    if (e.reason == EXIT_VMFAIL || e.entryfail || !vmxhandle(vm, &e, inslen))
       break;
   }
   /* Report the exit that ended the loop to the user program. */
@@ -1066,12 +1090,11 @@ vmrun(int id, struct vmexit *ue)
  * current, as vmfree() requires.
  */
 void
-vmxfreeproc(struct proc *p)
-{
+vmxfreeproc(struct proc *p) {
   int id;
 
-  for(id = 0; id < NVM; id++)
-    if(vms.vm[id].used && vms.vm[id].owner == p)
+  for (id = 0; id < NVM; id++)
+    if (vms.vm[id].used && vms.vm[id].owner == p)
       vmfree(&vms.vm[id]);
 }
 
@@ -1084,9 +1107,8 @@ vmxfreeproc(struct proc *p)
  * host memory behind it, through the EPT.  Returns 0 if the EPT does not
  * map it.
  */
-static char*
-gpa2kva(struct vm *vm, uint64 gpa)
-{
+static char *
+gpa2kva(struct vm *vm, uint64 gpa) {
   uint64 *pte;
 
   /*
@@ -1117,8 +1139,7 @@ gpa2kva(struct vm *vm, uint64 gpa)
  * 5.5).  Returns -1 if the address is not mapped.
  */
 static int
-gva2gpa(struct vm *vm, uint64 gva, uint64 *gpa)
-{
+gva2gpa(struct vm *vm, uint64 gva, uint64 *gpa) {
   // not really 'EPT' address but it uses the same mask
   uint64 e = EPT_ADDR(vm->cr3), *table, mask, shift = 12 + 9 * 3;
   int level;
@@ -1184,8 +1205,7 @@ ok:
  * kernel, to build the MP tables, and to emulate string I/O.
  */
 int
-vmmem(int id, uint64 addr, char *buf, int len, int flags)
-{
+vmmem(int id, uint64 addr, char *buf, int len, int flags) {
   struct vm *vm;
   uint64 gpa;
   char *k;
@@ -1254,8 +1274,7 @@ vmmem(int id, uint64 addr, char *buf, int len, int flags)
  * or vector.  Called from the vminject system call.
  */
 int
-vminject(int id, int vector)
-{
+vminject(int id, int vector) {
   struct vm *vm;
 
   /*
@@ -1264,7 +1283,7 @@ vminject(int id, int vector)
    * external interrupt there would be taken for an exception.  Vectors
    * have 8 bits, so 255 is the largest.
    */
-  if((vm = getvm(id)) == 0 || vector < 32 || vector > 255)
+  if ((vm = getvm(id)) == 0 || vector < 32 || vector > 255)
     return -1;
   /*
    * Only record the request: the guest is not running (the owner, the
@@ -1285,19 +1304,18 @@ vminject(int id, int vector)
  * task priority or in-service register, so this is all of our priority.
  */
 static int
-nextpending(struct vm *vm)
-{
+nextpending(struct vm *vm) {
   int i, b;
 
   /*
    * Scan from the top: word 3 holds vectors 192-255, word 0 vectors
    * 0-63.  Skip empty words, then look for the highest set bit.
    */
-  for(i = 3; i >= 0; i--)
-    if(vm->pending[i])
-      for(b = 63; b >= 0; b--)
-        if(vm->pending[i] & (1ULL << b))
-          return 64*i + b;  /* bit b of word i is vector 64*i + b */
+  for (i = 3; i >= 0; i--)
+    if (vm->pending[i])
+      for (b = 63; b >= 0; b--)
+        if (vm->pending[i] & (1ULL << b))
+          return 64 * i + b; /* bit b of word i is vector 64*i + b */
   return -1;
 }
 
@@ -1311,8 +1329,7 @@ nextpending(struct vm *vm)
  * of RAX..RDX become 0, as on real hardware.
  */
 static void
-vmxcpuid(struct vm *vm)
-{
+vmxcpuid(struct vm *vm) {
   uint leaf = vm->regs.rax, subleaf = vm->regs.rcx, a, b, c, d; // truncates 64->32 bits
   asm volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(leaf), "c"(subleaf));
   if (leaf == 1)
@@ -1343,9 +1360,54 @@ vmxcpuid(struct vm *vm)
  *    as the guest can, and the next entry injects it.
  */
 static void
-vmxinject(struct vm *vm)
-{
-  /* HW2 Part 4: write this function; see HW2.md. */
-  vmwrite(VM_ENTRY_INTR_INFO_FIELD, 0);
-  vmwrite(CPU_BASED_VM_EXEC_CONTROL, vm->cpuctl);
+vmxinject(struct vm *vm) {
+  uint controls = vm->cpuctl, id = 0;
+
+  // Re-inject an event whose delivery the last exit interrupted. If vm->idtvec has the valid bit,
+  // the exit happened while the CPU was delivering that event to the guest, and the event did not
+  // reach its handler (SDM 30.2.4; SDM 30.1: CS, RIP, RSP and RFLAGS were not updated for it).
+  // Inject it again:
+  if (vm->idtvec & INTR_INFO_VALID) {
+    // This comes first because this event happened first, and only one event can be injected per
+    // entry.
+    id = vm->idtvec;
+    // - the identification is the original one with bit 12 cleared (bit 12 is undefined in the
+    // original-event field but reserved in the injected one);
+    id &= ~(1 << 12);
+    // - if bit 11 is set, also write the saved error code to the injected-event error-code field;
+    if (id & (1 << 11))
+      vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE, vm->idterr);
+    // - if the type is 4, 5 or 6 (a software interrupt or exception), also write the saved
+    // instruction length to the VM-entry instruction-length field.
+    if ((((id >> 8)) & 0b0111) > 3)
+      vmwrite(VM_ENTRY_INSTRUCTION_LEN, vm->idtlen);
+  }
+  // Otherwise, inject the highest pending vector, if the guest can take it now. “Can take it”
+  // means exactly what it means for a real CPU: RFLAGS.IF is 1 in vm->rflags, and vm->intrstate
+  // shows no blocking by STI or by MOV SS.
+  else if ((vm->rflags & FL_IF) && !(vm->intrstate & 0x03) && ((id = nextpending(vm)) > 0)) {
+    // Then the identification is the vector, type 0 (external interrupt) in bits 10:8, and the
+    // valid bit 31. No error code and no instruction length. Clear that vector’s bit in
+    // vm->pending: it has left the pending set now.
+    vm->pending[id / 64] &= ~(1ULL << (id % 64));
+    id |= INTR_INFO_VALID;
+  }
+
+  // Ask for an interrupt-window exit whenever an interrupt is still pending after this decision.
+  // That covers two cases: an interrupt is pending but the guest cannot take one now (rule 2 did
+  // not inject), and this entry injects something but more interrupts wait behind it. Set
+  // CPU_INTR_WINDOW_EXITING in the value you write to the primary controls. The CPU then exits
+  // (reason 7) before the first instruction at which IF is 1 and nothing blocks interrupts
+  // (SDM 28.2), and the next entry injects. This is safe even when this entry injects an event: the
+  // window exit comes only after the injected event has been delivered (SDM 29.7.5, “These events
+  // occur after any event injection”), and delivery through an interrupt gate clears IF, so the
+  // window opens only when the guest’s handler returns with iretq.
+  controls |= CPU_INTR_WINDOW_EXITING;
+
+  // Finally, write both fields on every entry: the identification (0 when nothing is injected) and
+  // the primary controls, computed from vm->cpuctl plus, when rule 3 says so,
+  // CPU_INTR_WINDOW_EXITING. Writing the controls every time is what turns window exiting off again
+  // once nothing is pending.
+  vmwrite(CPU_BASED_VM_EXEC_CONTROL, controls);
+  vmwrite(VM_ENTRY_INTR_INFO_FIELD, id);
 }
