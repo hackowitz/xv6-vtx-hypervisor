@@ -83,7 +83,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > exactly as on a real machine? Why does `INT $64` not raise the
 > same issue?
 
-**Answer:** (your answer)
+**Answer:** All exceptions cause VM exits, and the host would have to emulate the guest's entire exception handler - since triggering an exception in the guest would just exit back to the host again. Software interrupts are handles separately from exceptions, and the exception bitmap does not apply.
 
 ### Question 3.2
 
@@ -93,7 +93,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > did in Step 3 as an example, and give one more reason a
 > hypervisor might want to change what the guest sees.
 
-**Answer:** (your answer)
+**Answer:** `CPUID` lets the kernel read the features of the real hardware - which should always be controlled by the hypervisor. Other than hiding virtualization support, the VMM might want to let the guest see it's running on a virtual CPU model, or manage availability of some features. Like hyper-threading.
 
 ### Question 3.3
 
@@ -102,7 +102,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > `vmcreate()` did not zero guest memory, given that `loadkernel()`
 > copies only `filesz` bytes of each segment?
 
-**Answer:** (your answer)
+**Answer:** The guest starts with paging disabled, so writing to a high `0x800001...` address would cause a memory error. If `vmcreate` had not zeroed guest memory, it could leak data from the host or other guests. In cases of reserved addresses like the APIC, unexpected non-zero memory would have undefined behavior.
 
 ### Question 3.4
 
@@ -113,7 +113,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > `lapicstartap()` in `lapic.c`: what would the guest do, and why
 > can our zeroed APIC page never make it work?
 
-**Answer:** (your answer)
+**Answer:** If the APIC ID were 1, `lapicinit` would set the wrong values and the real APIC would remain zeroed. The CPU would silently fail to set any interupts, and so interrupting operations (including theose needed for printing error messages) would fail. For two processors, the `lapicstartap` for processor `1` would send the processor IPI to the wrong (nonexistant) processor `2`, and the `while (c->started == 0)` in `startothers` would wait indefinitely for procesor `1` to start. We would see no message because the loop never exits.
 
 
 ## Part 4: Interrupts

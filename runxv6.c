@@ -302,10 +302,6 @@ mptables(void)
       .physaddr = 0x000F0010, // the physical address of the configuration table;
       .length = 1,            // in 16-byte units;
       .specrev = 4,           // 4 (spec 1.4);
-      .checksum = 0,          // xor of all other bytes in the struct
-      .type = 0,              // 0, meaning “a configuration table is present”;
-      .imcrp = 0,             // 0, meaning no IMCR, so mpinit() leaves ports 0x22 and 0x23 alone.
-      .reserved = ""
   };
   pointer.checksum = checksum((uchar *)&pointer, sizeof(pointer));
   if (vmmem(vm, 0x000F0000, &pointer, sizeof(pointer), VMMEM_WRITE) < 0)
