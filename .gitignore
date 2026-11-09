@@ -12,9 +12,9 @@ bootblock
 entryother
 initcode
 initcode.out
-kernel
+*kernel
 kernelmemfs
-mkfs
+mkfs*
 fmt
 .gdbinit
 .vscode/
@@ -24,3 +24,4 @@ serial.out
 helloguest
 helloguest.elf
 *.img.lock
+

@@ -1277,7 +1277,6 @@ vminject(int id, int vector) {
    */
   if ((vm = getvm(id)) == 0 || vector < 32 || vector > 255)
     return -1;
-  cprintf("vminject %d\n", vector);
   /*
    * Only record the request: the guest is not running (the owner, the
    * only caller, is in this system call, not in vmrun()), so no VMCS is
@@ -1405,8 +1404,6 @@ vmxinject(struct vm *vm) {
   // the primary controls, computed from vm->cpuctl plus, when rule 3 says so,
   // CPU_INTR_WINDOW_EXITING. Writing the controls every time is what turns window exiting off again
   // once nothing is pending.
-  if (info & INTR_INFO_VALID)
-    cprintf("inject 0x%x\n", (uint64)info);
   vmwrite(CPU_BASED_VM_EXEC_CONTROL, controls);
   vmwrite(VM_ENTRY_INTR_INFO_FIELD, info);
 }
