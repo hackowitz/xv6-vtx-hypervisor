@@ -42,16 +42,16 @@
  *   exit()      calls vmxfreeproc() to free the process's VMs
  */
 
-#include "vmx.h"
+#include "types.h"
 #include "defs.h"
+#include "param.h"
 #include "memlayout.h"
 #include "mmu.h"
-#include "param.h"
 #include "proc.h"
-#include "spinlock.h"
-#include "types.h"
-#include "vmxapi.h"
 #include "x86.h"
+#include "spinlock.h"
+#include "vmx.h"
+#include "vmxapi.h"
 
 /* Maximum number of VMs in the whole system (all processes). */
 #define NVM 4
@@ -1392,7 +1392,6 @@ vmxinject(struct vm *vm) {
     vm->pending[id / 64] &= ~(1ULL << (id % 64));
     id |= INTR_INFO_VALID;
   }
-
   // Ask for an interrupt-window exit whenever an interrupt is still pending after this decision.
   // That covers two cases: an interrupt is pending but the guest cannot take one now (rule 2 did
   // not inject), and this entry injects something but more interrupts wait behind it. Set
