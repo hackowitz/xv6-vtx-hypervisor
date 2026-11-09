@@ -896,15 +896,15 @@ vmxhandle(struct vm *vm, struct vmexit *e, uint inslen) {
     return 1;
   case EXIT_IO:
     vm->rip += inslen;
-    e->io.size = (e->qual & 0x00000007) + 1;   // 0 = 1-byte, 1 = 2-byte, 3 = 4-byte
-    e->io.in = e->qual & 0x00000008;           // 0=out, 1=in
+    e->io.size = (e->qual & 0b0111) + 1;       // 0 = 1-byte, 1 = 2-byte, 3 = 4-byte
+    e->io.in = e->qual & 0b1000;               // 0=out, 1=in
     e->io.port = (e->qual & 0xFFFF0000) >> 16; // port number
-
-    if (e->io.in) {
-      return 0;
-    } else if (e->qual & 0x10) // 0=not string, 1=string
-      return 1;                // kernel doesn't handle string or io in; give it to user space
-    else                       // kernel _does_ handle character output
+    if (e->qual & 0b10000) {                   // string
+      e->io.string = 1;                        //
+      e->io.rep = (e->qual >> 5) & 1;          // repeat
+      e->io.count = e->io.rep ? vm->regs.rcx : 1;
+    }
+    if (!e->io.in && !e->io.string)
       e->io.data = vm->regs.rax & iomask(e->io.size);
     return 0;
   case EXIT_INTR_WINDOW:
@@ -1067,6 +1067,15 @@ vmrun(int id, struct vmexit *ue) {
         vm->idterr = vmread(IDT_VECTORING_ERROR_CODE);
         vm->idtlen = inslen;
       }
+      /*
+       * For INS and OUTS (bit 4 of the qualification), the CPU saves the
+       * linear address of the memory operand: the ES base plus RDI for
+       * INS, the DS (or override) base plus RSI for OUTS (SDM 30.2.1).
+       * xv6 runs in 64-bit mode, where those bases are 0, so it is RDI
+       * or RSI itself.  For other exits the field is not meaningful.
+       */
+      if (e.reason == EXIT_IO && (e.qual & (1 << 4)))
+        e.io.addr = vmread(GUEST_LINEAR_ADDRESS);
     }
     /* Release the VMCS and turn interrupts back on (HW1 part 5, Step 8). */
     vmclear(V2P(vm->vmcs));
@@ -1353,7 +1362,8 @@ vmxcpuid(struct vm *vm) {
  */
 static void
 vmxinject(struct vm *vm) {
-  uint controls = vm->cpuctl, vector, info = 0, i;
+  int vector;
+  uint controls = vm->cpuctl, info = 0, i;
 
   // Re-inject an event whose delivery the last exit interrupted. If vm->idtvec has the valid bit,
   // the exit happened while the CPU was delivering that event to the guest, and the event did not

@@ -742,8 +742,24 @@ idedone(int n)
 static void
 idestring(struct vmexit *e)
 {
-  /* HW2 Part 5: write this function; see HW2.md. */
-  die("idestring not written");
+#define TODO (0)
+  uint64 reg = VMREG_RSI;
+  uint flags = VMMEM_VIRT, len = e->io.count * e->io.size;
+  if (idelen - idepos > len)
+    die("ide transfer too large for buffer");
+  if (e->io.in) {
+    flags |= VMMEM_WRITE;
+    reg = VMREG_RDI;
+  }
+
+  if (vmmem(vm, e->io.addr, idebuf + idepos, len, flags) < 0)
+    die("ide memory-mapped io failure");
+  if (e->io.rep && (vmsetreg(vm, VMREG_RCX, 0) < 0))
+    die("setting rcx failed");
+
+  vmsetreg(vm, reg, getreg(reg) + TODO);
+  idedone(len);
+#undef TODO
 }
 
 /* Ports 0x1F0-0x1F7, and 0x3F6 (control and alternate status). */
