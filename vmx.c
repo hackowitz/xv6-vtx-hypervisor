@@ -1191,7 +1191,6 @@ ok:
   // `table` is now the leaf entry
   mask = (~0ULL) << shift;
   *gpa = (e & mask) | (gva & ~mask);
-  cprintf("DEBUG: GVA 0x%x -> GPA 0x%x", (uint64)gva, (uint64)gpa);
   return 0;
 }
 
@@ -1239,13 +1238,6 @@ vmmem(int id, uint64 addr, char *buf, int len, int flags) {
     /* Then through the EPT to the host page; 0 if outside the guest. */
     if ((k = gpa2kva(vm, gpa)) == 0)
       return -1;
-    cprintf(
-        "DEBUG: Copy BUF 0x%x <-> ADDR 0x%x @ GPA 0x%x, FLAGS=0x%x\n",
-        (uint64)buf,
-        addr,
-        (uint64)gpa,
-        (uint64)flags
-    );
 
     /* Stay within one guest page: the next one may be elsewhere. */
     /*
@@ -1285,6 +1277,7 @@ vminject(int id, int vector) {
    */
   if ((vm = getvm(id)) == 0 || vector < 32 || vector > 255)
     return -1;
+  cprintf("vminject %d\n", vector);
   /*
    * Only record the request: the guest is not running (the owner, the
    * only caller, is in this system call, not in vmrun()), so no VMCS is
@@ -1361,7 +1354,7 @@ vmxcpuid(struct vm *vm) {
  */
 static void
 vmxinject(struct vm *vm) {
-  uint controls = vm->cpuctl, id = 0;
+  uint controls = vm->cpuctl, vector, info = 0, i;
 
   // Re-inject an event whose delivery the last exit interrupted. If vm->idtvec has the valid bit,
   // the exit happened while the CPU was delivering that event to the guest, and the event did not
@@ -1370,43 +1363,50 @@ vmxinject(struct vm *vm) {
   if (vm->idtvec & INTR_INFO_VALID) {
     // This comes first because this event happened first, and only one event can be injected per
     // entry.
-    id = vm->idtvec;
+    info = vm->idtvec;
+    vector = info & 0xFF; // for debug print statements
     // - the identification is the original one with bit 12 cleared (bit 12 is undefined in the
     // original-event field but reserved in the injected one);
-    id &= ~(1 << 12);
+    info &= ~(1 << 12);
     // - if bit 11 is set, also write the saved error code to the injected-event error-code field;
-    if (id & (1 << 11))
+    if (info & (1 << 11))
       vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE, vm->idterr);
     // - if the type is 4, 5 or 6 (a software interrupt or exception), also write the saved
     // instruction length to the VM-entry instruction-length field.
-    if ((((id >> 8)) & 0b0111) > 3)
+    if ((((info >> 8)) & 0b0111) > 3)
       vmwrite(VM_ENTRY_INSTRUCTION_LEN, vm->idtlen);
   }
   // Otherwise, inject the highest pending vector, if the guest can take it now. “Can take it”
   // means exactly what it means for a real CPU: RFLAGS.IF is 1 in vm->rflags, and vm->intrstate
   // shows no blocking by STI or by MOV SS.
-  else if ((vm->rflags & FL_IF) && !(vm->intrstate & 0x03) && ((id = nextpending(vm)) > 0)) {
+  else if ((vm->rflags & FL_IF) && !(vm->intrstate & 0x03) && ((vector = nextpending(vm)) > 0)) {
     // Then the identification is the vector, type 0 (external interrupt) in bits 10:8, and the
-    // valid bit 31. No error code and no instruction length. Clear that vector’s bit in
-    // vm->pending: it has left the pending set now.
-    vm->pending[id / 64] &= ~(1ULL << (id % 64));
-    id |= INTR_INFO_VALID;
+    // valid bit 31. No error code and no instruction length.
+    info = (vector & 0xFF) | INTR_INFO_VALID;
+    // Clear that vector’s bit in vm->pending: it has left the pending set now.
+    vm->pending[vector / 64] &= ~(1ULL << (vector % 64));
   }
   // Ask for an interrupt-window exit whenever an interrupt is still pending after this decision.
   // That covers two cases: an interrupt is pending but the guest cannot take one now (rule 2 did
   // not inject), and this entry injects something but more interrupts wait behind it. Set
   // CPU_INTR_WINDOW_EXITING in the value you write to the primary controls. The CPU then exits
   // (reason 7) before the first instruction at which IF is 1 and nothing blocks interrupts
-  // (SDM 28.2), and the next entry injects. This is safe even when this entry injects an event: the
-  // window exit comes only after the injected event has been delivered (SDM 29.7.5, “These events
-  // occur after any event injection”), and delivery through an interrupt gate clears IF, so the
-  // window opens only when the guest’s handler returns with iretq.
-  controls |= CPU_INTR_WINDOW_EXITING;
-
+  // (SDM 28.2), and the next entry injects. This is safe even when this entry injects an event:
+  // the window exit comes only after the injected event has been delivered (SDM 29.7.5, “These
+  // events occur after any event injection”), and delivery through an interrupt gate clears IF,
+  // so the window opens only when the guest’s handler returns with iretq.
+  for (i = 0; i < 4; ++i) {
+    if (vm->pending[i]) {
+      controls |= CPU_INTR_WINDOW_EXITING;
+      break;
+    }
+  }
   // Finally, write both fields on every entry: the identification (0 when nothing is injected) and
   // the primary controls, computed from vm->cpuctl plus, when rule 3 says so,
   // CPU_INTR_WINDOW_EXITING. Writing the controls every time is what turns window exiting off again
   // once nothing is pending.
+  if (info & INTR_INFO_VALID)
+    cprintf("inject 0x%x\n", (uint64)info);
   vmwrite(CPU_BASED_VM_EXEC_CONTROL, controls);
-  vmwrite(VM_ENTRY_INTR_INFO_FIELD, id);
+  vmwrite(VM_ENTRY_INTR_INFO_FIELD, info);
 }
