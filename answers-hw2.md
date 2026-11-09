@@ -5,10 +5,9 @@ in answers.md). Replace each
 `(your answer)` with two or three sentences. Keep the question numbers
 (part.question), and do not delete the questions.
 
-- **Name:**
-- **Machine and environment you tested on** (CADE lab machine with QEMU, or Bochs):
-- **How far did you get?** (for example "the guest boots to a shell", or "stuck in part 4"):
-
+- **Name:** Noah Jackowitz
+- **Machine and environment you tested on** x86_64 Arch Linux with QEMU and KVM.
+- **How far did you get?** Everything runs! All tests pass within `runxv6 xv6kernel`, and `runvm helloguest` works correctly.
 
 ## Part 1: The host side: what changes in xv6 itself
 
@@ -182,7 +181,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > and `runxv6` have to do differently if `runxv6` moved only one dword per
 > exit?
 
-**Answer:** (your answer)
+**Answer:** The kernel can advance RIP for a read because the host does the entire operation "at once", as far as the guest sees, so the counter can be set to its final value and the RIP can be incremented in one shot. If `runxv6` moved only one dword, we would need to emulate a lower levef of hardware execution, causing VM exits and entries as we move the data uintil the counter is done - and only then advancing RIP.
 
 ### Question 5.2
 
@@ -192,7 +191,9 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > it (which register tells you DF, and how would the address and the RDI
 > update change?).
 
-**Answer:** (your answer)
+**Answer:** 
+
+The real CPU shoudl degrement RDI and fill memory `ES-n:ES`, instead of `ES:ES+n`. Our `idestring` does not check DF, and `RDI` would move in the wrong direction (up instead of down). The `EFLAGS` register bit 10 tells us `DF`, and it would be a simple change to add a check for a decrement instead of increment.
 
 ### Question 5.3
 
@@ -201,7 +202,9 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > `runxv6` need in order to emulate the keyboard instead (which ports,
 > which vector, and what would it have to do to each character)?
 
-**Answer:** (your answer)
+**Answer:** The host itself uses the serial port instead of PS/2 when running in QEMU, so all the plumbing is already there and there's no reason to change it.
+
+PS/2 would use ports 0x60 and 0x64 (IRQ_KBD=1). It doesn't look like anything complicated, but we would fill a buffer as in `kbd.c` and inject `IRQ_KBD` events.
 
 ### Question 5.4
 
@@ -209,7 +212,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > guest's output is complete. Why? And why, even so, do the CRT controller's
 > two ports have to be emulated?
 
-**Answer:** (your answer)
+**Answer:** The ports are used to check the cursorr porition, and the guest will error if the cursor is out of bounds - which it would be if the bits were all tied high, as for an unused port.
 
 ### Question 5.5
 
@@ -218,4 +221,4 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > 0x1F0 is a disk live, and why is it better there than in the kernel? Name
 > the matching pieces in KVM and QEMU.
 
-**Answer:** (your answer)
+**Answer:** Port mappings live in the user VMM program on the host. The kernel only holds things that need to execute in ring 0, behind a system call, so living it the minimum privilege is appropriate - VMM development doesn't need to be done by the kernel developer unless a new syscall is needed. On linux, this would be done in QEMU, not KVM.
