@@ -83,7 +83,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > exactly as on a real machine? Why does `INT $64` not raise the
 > same issue?
 
-**Answer:** All exceptions cause VM exits, and the host would have to emulate the guest's entire exception handler - since triggering an exception in the guest would just exit back to the host again. Software interrupts are handles separately from exceptions, and the exception bitmap does not apply.
+**Answer:** All exceptions cause VM exits, and the host would have to emulate the guest's entire exception handler - since triggering an exception in the guest would just exit back to the host again. Software interrupts are handled separately from exceptions, and the exception bitmap does not apply.
 
 ### Question 3.2
 
@@ -127,7 +127,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > to a second timer tick that arrives before the guest has taken the
 > first?
 
-**Answer:** (your answer)
+**Answer:** From the SDM 13.8.2, the task's priority is it's vector. We emulate the same behavior as the hardware by counting down from the highest vector to the lowest, and selecting the first encountered. A real APIC would also have a task-priority register and processor-priority register. The disk is handled first because it's vector is higher. A second timer tick would clobber the first, and the guest would only see the latest.
 
 ### Question 4.2
 
@@ -137,7 +137,10 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > call: is the event lost if we do not re-inject it, and why? For (c),
 > what goes wrong if we re-inject it but forget the instruction length?
 
-**Answer:** (your answer)
+**Answer:**
+- **a.)** Yes, the event is stored in the VMCS exit field; the guest hasn't recieved it yet.
+- **b.)** Yes, the host handles EPT violations separately from guest interrupts; a guest page fault must be delivered to the guest for it's own handling (e.g. guest kernel allocates memory for guest user program)
+- **c.)** No, as in question 3.1, a software interrupt is handled in guest software, not through the APIC IDT. If the instruction length is not included, VMX cannot increment the RIP correctly and the guest stays stuck at the same instruction.
 
 ### Question 4.3
 
@@ -147,7 +150,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > at an idle shell prompt and you type a key. Why not return on every
 > external-interrupt exit instead?
 
-**Answer:** (your answer)
+**Answer:** The host needs to schedule the guest alongside any other running processes. An exit to user space allows the host OS to do so. Otherwise, the guest would keep the CPU until an interrupt that `vmxhandle` returns to user space, and all host schedule would be dependent on the guest's interrupts.
 
 ### Question 4.4
 
@@ -157,7 +160,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > next exit of any kind not good enough, so that we need interrupt-window
 > exiting?
 
-**Answer:** (your answer)
+**Answer:** For VM entry, an interrupt during a critical section could break guest behavior, since the real hardware woudl not deliver the interrupt. The host wants to deliver the interrupt predictably, and so waits until this condition changes to inject it. Otherwise, the guest could run for a long time before triggering another interupt, and have unrealistic performance issues from starving the pending interrupt.
 
 ### Question 4.5
 
@@ -167,8 +170,7 @@ VM entry sets the CPU's actual CR3 from the guest's stored value in the VMCS, so
 > CPU (`lapicstartap()`), where each interrupt should go, the VMCS, and
 > the fact that an xv6 process has a single thread.
 
-**Answer:** (your answer)
-
+**Answer:** The host would prepare more entries in the MP tables, to present additional virtual hardware to the guest. The host would have to intercept guest lapic writes and spawn new VMM processes for each guest CPU (since the host does not do multiple threads per process). Each guest CPU would have it's own VMCS.
 
 ## Part 5: Devices and string I/O
 
